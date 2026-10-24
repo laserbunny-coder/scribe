@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Scribe" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorBackground">#0F0F11</item>
+        <item name="android:windowBackground">#0F0F11</item>
+        <item name="android:colorAccent">#8AB4F8</item>
+        <item name="android:statusBarColor">#0F0F11</item>
+        <item name="android:navigationBarColor">#0F0F11</item>
+    </style>
+</resources>
