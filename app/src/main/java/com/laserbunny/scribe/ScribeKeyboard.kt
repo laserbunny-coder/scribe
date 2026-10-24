@@ -318,6 +318,7 @@ class ScribeKeyboard : InputMethodService() {
         card.setPadding(dp(14), dp(12), dp(14), dp(12))
         card.addView(label(s.mode.name.ifEmpty { "New mode" }, 16f, C.TEXT, true))
         card.addView(label(s.mode.prompt.ifEmpty { "(Says it as you said it.)" }, 13f, C.TEXT).apply { maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.END }.margins(this, t = 4))
+        card.addView(label("Written by " + Store.modelName(s.mode.model), 12f, C.DIM).margins(this, t = 6))
         if (s.mode.apps.isNotEmpty()) card.addView(label("Picks itself in: " + s.mode.apps.joinToString(", ") { appName(it) }, 12f, C.DIM).margins(this, t = 6))
         c.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         val r = row(this)

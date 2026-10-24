@@ -215,7 +215,7 @@ object Scribe {
                         done()
                         val m = o.getJSONObject("mode")
                         val id = purpose.current?.id ?: ""
-                        set(State.Draft(Mode(id, m.optString("name"), m.optString("prompt"), Mode.from(m).apps), o.optString("said")))
+                        set(State.Draft(Mode.from(m).copy(id = id), o.optString("said")))
                     }
                 }
             } catch (e: ScribeError) {

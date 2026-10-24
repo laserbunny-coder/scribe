@@ -142,7 +142,7 @@ class SetupActivity : Activity() {
             val card = column(this)
             card.background = shape(C.SURFACE, 14, C.BORDER, 1)
             card.setPadding(dp(14), dp(12), dp(14), dp(12))
-            card.addView(label(m.name, 16f, C.TEXT, true))
+            card.addView(label("${m.name}   ·  ${Store.modelName(m.model)}", 16f, C.TEXT, true))
             card.addView(label(m.prompt.ifEmpty { "As you said it." }, 13f, C.DIM).apply { maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END }.margins(this, t = 4))
             card.setOnClickListener { editMode(m) }
             page.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
@@ -196,13 +196,19 @@ class SetupActivity : Activity() {
             hint = "Apps it picks itself in (app ids)"
             setSingleLine()
         }
-        box.addView(name); box.addView(prompt); box.addView(apps)
+        val models = android.widget.RadioGroup(this)
+        val current = m.model.ifEmpty { if (m.id.isEmpty()) "haiku" else "opus" }
+        Store.MODELS.forEachIndexed { i, (id, text) ->
+            models.addView(android.widget.RadioButton(this).apply { this.id = i + 1; this.text = text; isChecked = id == current })
+        }
+        box.addView(name); box.addView(prompt); box.addView(models); box.addView(apps)
         val d = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(if (m.id.isEmpty()) "New mode" else m.name)
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
                 val changedMode = Mode(m.id, name.text.toString().trim(), prompt.text.toString().trim(),
-                    apps.text.toString().split(',').map { it.trim() }.filter { it.isNotEmpty() })
+                    apps.text.toString().split(',').map { it.trim() }.filter { it.isNotEmpty() },
+                    Store.MODELS.getOrNull(models.checkedRadioButtonId - 1)?.first ?: current)
                 if (changedMode.name.isEmpty()) { toast("A mode needs a name"); return@setPositiveButton }
                 save { Api(Scribe.store).saveMode(changedMode) }
             }
