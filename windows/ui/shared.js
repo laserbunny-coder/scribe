@@ -55,10 +55,10 @@ export async function api(path, { body, form, method, signal } = {}) {
 
 // Shown until your own modes have been fetched once.
 const STARTER = [
-  { id: 'text', name: 'Text message', prompt: '', apps: [] },
-  { id: 'email', name: 'Email', prompt: '', apps: ['outlook.exe', 'thunderbird.exe'] },
-  { id: 'clean', name: 'Clean only', prompt: '', apps: [] },
-  { id: 'idea', name: 'Idea', prompt: '', apps: [] }
+  { id: 'text', name: 'Text message', prompt: '', apps: [], model: 'haiku' },
+  { id: 'email', name: 'Email', prompt: '', apps: ['outlook.exe', 'thunderbird.exe'], model: 'sonnet' },
+  { id: 'clean', name: 'Clean only', prompt: '', apps: [], model: 'haiku' },
+  { id: 'idea', name: 'Idea', prompt: '', apps: [], model: 'opus' }
 ];
 
 export const modes = () => { const m = get('modes'); return Array.isArray(m) && m.length ? m : STARTER; };

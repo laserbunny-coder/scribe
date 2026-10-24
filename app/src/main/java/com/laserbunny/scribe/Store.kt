@@ -4,10 +4,14 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** A mode: how a dictation is rewritten (Text message, Email, …). */
-data class Mode(val id: String, val name: String, val prompt: String, val apps: List<String>) {
+/**
+ * A mode: how a dictation is rewritten (Text message, Email, …), and which
+ * Claude does it ("haiku", "sonnet" or "opus"; empty = keep the server's).
+ */
+data class Mode(val id: String, val name: String, val prompt: String, val apps: List<String>, val model: String = "") {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("prompt", prompt).put("apps", JSONArray(apps))
+        .apply { if (model.isNotEmpty()) put("model", model) }
 
     companion object {
         fun from(o: JSONObject): Mode {
@@ -15,6 +19,7 @@ data class Mode(val id: String, val name: String, val prompt: String, val apps: 
             return Mode(
                 o.optString("id"), o.optString("name"), o.optString("prompt"),
                 (0 until apps.length()).map { apps.getString(it) },
+                o.optString("model"),
             )
         }
     }
@@ -86,6 +91,13 @@ class Store(context: Context) {
         set(v) = p.edit().putBoolean("lastWaiting", v).apply()
 
     companion object {
+        val MODELS = listOf(
+            "haiku" to "Haiku: quick and cheap, for texts",
+            "sonnet" to "Sonnet: in between, for emails",
+            "opus" to "Opus: the best writing, for ideas and characters",
+        )
+        fun modelName(id: String) = when (id) { "haiku" -> "Haiku"; "sonnet" -> "Sonnet"; else -> "Opus" }
+
         // Shown until the account's own modes have been fetched once.
         val STARTER = listOf(
             Mode("text", "Text", "", listOf("com.google.android.apps.messaging")),

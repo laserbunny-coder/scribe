@@ -17,6 +17,12 @@ const el = (tag, props = {}, ...kids) => {
   e.append(...kids.filter((k) => k != null && k !== false));
   return e;
 };
+const MODELS = [
+  ['haiku', 'Haiku: quick and cheap, for texts'],
+  ['sonnet', 'Sonnet: in between, for emails'],
+  ['opus', 'Opus: the best writing, for ideas and characters']
+];
+const modelName = (id) => ({ haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' })[id] || 'Opus';
 const button = (text, cls, onclick) => el('button', { className: cls, textContent: text, onclick });
 
 // Copying the link in Inkwell is enough: Scribe looks at the clipboard when you come back.
@@ -68,7 +74,7 @@ async function render() {
     el('p', { className: 'dim', textContent: 'Shared with your phone. Click one to read or change it. While talking, Ctrl + Shift + S switches mode; Scribe remembers your pick for that program.' }),
     ...modes().map((m) => (editing && editing.id === m.id ? editor(m) : el('div', {
       className: 'card mode', onclick: () => { editing = m; render(); }
-    }, el('strong', { textContent: m.name }), el('div', { className: 'prompt', textContent: m.prompt || 'As you said it.' })))),
+    }, el('strong', { textContent: m.name }), el('span', { className: 'dim', textContent: `  ·  ${modelName(m.model)}` }), el('div', { className: 'prompt', textContent: m.prompt || 'As you said it.' })))),
     editing && !editing.id ? editor(editing) : el('div', { className: 'row' }, button('New mode', 'btn', () => { editing = {}; render(); })),
 
     el('h2', { textContent: 'Keys' }),
@@ -104,16 +110,17 @@ function editor(m) {
   const name = el('input', { value: m.name || '', placeholder: 'Name, like Work Slack' });
   const prompt = el('textarea', { value: m.prompt || '', placeholder: 'How it writes, in plain words' });
   const apps = el('input', { value: (m.apps || []).join(', '), placeholder: 'Programs it picks itself in, like slack.exe, or Gmail' });
+  const model = el('select', {}, ...MODELS.map(([id, label]) => el('option', { value: id, textContent: label, selected: (m.model || (m.id ? 'opus' : 'haiku')) === id })));
   const error = el('p', { className: 'error' });
   const save = async () => {
-    const mode = { id: m.id || '', name: name.value.trim(), prompt: prompt.value.trim(), apps: apps.value.split(',').map((a) => a.trim()).filter(Boolean) };
+    const mode = { id: m.id || '', name: name.value.trim(), prompt: prompt.value.trim(), apps: apps.value.split(',').map((a) => a.trim()).filter(Boolean), model: model.value };
     if (!mode.name) { error.textContent = 'A mode needs a name.'; return; }
     try { await api('', { body: { action: 'save-mode', mode } }); await refreshModes(); editing = null; render(); } catch (e) { error.textContent = e.message; }
   };
   const remove = async () => {
     try { await api('', { body: { action: 'delete-mode', id: m.id } }); await refreshModes(); editing = null; render(); } catch (e) { error.textContent = e.message; }
   };
-  return el('div', { className: 'card' }, el('strong', { textContent: m.id ? m.name : 'New mode' }), name, prompt, apps, error,
+  return el('div', { className: 'card' }, el('strong', { textContent: m.id ? m.name : 'New mode' }), name, prompt, model, apps, error,
     el('div', { className: 'row' }, button('Save', 'btn fill', save), button('Cancel', 'btn', () => { editing = null; render(); }),
       m.id && button('Remove', 'btn plain', remove)));
 }
