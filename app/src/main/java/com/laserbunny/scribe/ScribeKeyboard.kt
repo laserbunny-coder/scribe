@@ -41,7 +41,7 @@ class ScribeKeyboard : InputMethodService() {
     private var field = ""
     private var lastModesFetch = 0L
 
-    private val changed: () -> Unit = { render(); typeIn() }
+    private val changed: () -> Unit = { render(); if (!Scribe.typeFailed) typeIn() }
 
     override fun onCreate() {
         super.onCreate()
@@ -81,28 +81,67 @@ class ScribeKeyboard : InputMethodService() {
             Scribe.refreshModes()
         }
         render()
-        typeIn()
+        if (!Scribe.typeFailed) typeIn()
     }
 
     // ---- Typing in ----
 
-    private fun typeIn() {
+    /**
+     * Types the waiting text in, then looks that it really arrived: some web
+     * editors (Thymer, for one) quietly drop text with line breaks in it. Then
+     * it tries once more a line at a time, pressing Enter between lines like
+     * typing would, and if that doesn't show up either, the text waits with
+     * Try again and Copy rather than claiming it went in.
+     */
+    private fun typeIn(byLines: Boolean = false) {
         val ic = currentInputConnection ?: return
         if (!isInputViewShown) return
         val i = Scribe.takeInsert(field) ?: return
+        val lines = byLines && multiLine()
         ic.beginBatchEdit()
         val replace = i.replace
         if (!replace.isNullOrEmpty()) {
             val before = ic.getTextBeforeCursor(replace.length, 0)?.toString()
             if (before == replace) ic.deleteSurroundingText(replace.length, 0)
         }
+        var sent = true
         if (i.text.isNotEmpty()) {
             // A space between this and words already there.
             val prev = ic.getTextBeforeCursor(1, 0)?.toString() ?: ""
             val gap = if (prev.isNotEmpty() && !prev[0].isWhitespace() && i.replace == null) " " else ""
-            ic.commitText(gap + i.text, 1)
+            if (lines) {
+                (gap + i.text).split('\n').forEachIndexed { n, line ->
+                    if (n > 0) sent = ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER)) &&
+                        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER)) && sent
+                    if (line.isNotEmpty()) sent = ic.commitText(line, 1) && sent
+                }
+            } else {
+                sent = ic.commitText(gap + i.text, 1)
+            }
         }
         ic.endBatchEdit()
+        if (i.text.isEmpty()) return
+        main.postDelayed({ check(i, lines, sent) }, 700)
+    }
+
+    private fun multiLine() = (currentInputEditorInfo?.inputType ?: 0) and EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE != 0
+
+    private fun check(i: Insert, byLines: Boolean, sent: Boolean) {
+        val squash = { s: String -> s.replace(Regex("\\s+"), " ").trim() }
+        val before = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString()
+        // The end of the last line, and the end of the first: what should now sit before the cursor.
+        val lastTail = squash(i.text.trimEnd().substringAfterLast('\n')).takeLast(24)
+        val firstTail = squash(i.text.trim().substringBefore('\n')).takeLast(24)
+        val here = before?.let { squash(it) }
+        // Can't read the box back: trust it.
+        if (sent && (here == null || here.contains(lastTail))) return
+        val nothingWentIn = here != null && !here.contains(firstTail) && !here.contains(lastTail)
+        if (!byLines && nothingWentIn && i.text.contains('\n') && multiLine()) {
+            Scribe.putBack(i)
+            typeIn(byLines = true)
+            return
+        }
+        Scribe.putBack(i.copy(replace = null))
     }
 
     private fun copy(text: String) {
@@ -276,6 +315,19 @@ class ScribeKeyboard : InputMethodService() {
         val bar = row(this)
         bar.background = shape(C.SURFACE, 14)
         bar.setPadding(dp(12), dp(6), dp(6), dp(6))
+        if (Scribe.typeFailed) {
+            // The text box didn't take it: say so, and keep it to try again or copy.
+            bar.addView(label("It didn’t show up in this box", 14f, C.BAD).apply { maxLines = 1 }.margins(this, l = 4), wrap(weight = 1f))
+            bar.addView(pill("Try again", "filled").apply { setOnClickListener { typeIn(byLines = true); render() } }.margins(this, r = 6))
+            bar.addView(pill("Copy").apply { setOnClickListener { copy(s.result.text); (this as TextView).text = "Copied" } })
+            c.addView(bar)
+            c.addView(controls(column(this, Gravity.CENTER_HORIZONTAL).apply {
+                val mic = iconButton(R.drawable.ic_mic, 72, C.REC, C.BG, "Talk again")
+                mic.setOnClickListener { record(Purpose.Dictate(Scribe.store.modeFor(app).id, app, field)) }
+                addView(mic)
+            }), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            return c
+        }
         bar.addView(iconButton(R.drawable.ic_check, 24, 0, C.GOOD, "").apply { isClickable = false; setPadding(0, 0, 0, 0) })
         val name = if (s.result.mode == "original") "said" else Scribe.store.modes.firstOrNull { it.id == s.result.mode }?.name ?: "said"
         bar.addView(label(if (s.result.mode == "original") "Typed in as you said it" else "Typed in as $name", 14f).apply {

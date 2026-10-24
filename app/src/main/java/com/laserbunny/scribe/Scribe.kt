@@ -243,8 +243,24 @@ object Scribe {
         val i = pending ?: return null
         if (i.field != field) return null
         pending = null
+        typeFailed = false
         store.lastWaiting = false
         return i
+    }
+
+    /**
+     * True when the last try to type in didn't show up in the text box (some
+     * web editors drop it). The text waits again, with Try again and Copy,
+     * instead of being retried by itself over and over.
+     */
+    var typeFailed = false
+        private set
+
+    fun putBack(i: Insert) {
+        pending = i
+        typeFailed = true
+        store.lastWaiting = true
+        main.post { listeners.toList().forEach { it() } }
     }
 
     /** What's waiting for a different text box than this one. */
