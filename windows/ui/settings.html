@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scribe</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { background: var(--page); padding: 28px 22px 40px; }
+  h1 { font-size: 26px; margin: 0; }
+  h2 { font-size: 17px; margin: 30px 0 10px; }
+  p { margin: 4px 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; }
+  .card.good { border-color: #2e4a35; }
+  .ok { color: var(--good); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  input, textarea {
+    width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 11px; font: inherit; margin-top: 8px;
+  }
+  textarea { resize: vertical; min-height: 84px; }
+  .mode { cursor: pointer; }
+  .mode .prompt { color: var(--dim); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .keys div { display: flex; justify-content: space-between; padding: 4px 0; }
+  label.switch { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+  .error { color: var(--bad); }
+  #try { min-height: 96px; }
+</style>
+</head>
+<body>
+<h1>Scribe</h1>
+<p class="dim">Press <kbd>Ctrl + Shift + Space</kbd> anywhere, talk, then press it again. It’s typed in the way you want.</p>
+<div id="page"></div>
+<script type="module" src="settings.js"></script>
+</body>
+</html>

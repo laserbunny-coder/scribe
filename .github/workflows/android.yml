@@ -3,7 +3,9 @@ name: Build the phone app
 on:
   push:
     branches: [main]
+    paths-ignore: ["windows/**", ".github/workflows/windows.yml"]
   pull_request:
+    paths-ignore: ["windows/**", ".github/workflows/windows.yml"]
   workflow_dispatch:
 
 permissions:

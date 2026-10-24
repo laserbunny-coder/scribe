@@ -1,0 +1,58 @@
+name: Build the Windows app
+
+on:
+  push:
+    branches: [main]
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  pull_request:
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Scribe for Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows/src-tauri
+      - name: Install the build tool
+        run: npm ci
+      # Each build gets the next version number, so Settings can tell when a newer one is out.
+      - name: Build
+        shell: bash
+        run: npx tauri build --config "{\"version\":\"0.1.${{ github.run_number }}\"}"
+      - name: Name the installer
+        shell: bash
+        run: cp src-tauri/target/release/bundle/nsis/*-setup.exe Scribe-setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scribe-windows
+          path: windows/Scribe-setup.exe
+      # Only builds of main replace the installer people download. It lives
+      # in its own release ("windows"), so the phone's "latest" link stays the APK.
+      - name: Publish the installer
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="0.1.${{ github.run_number }}"
+          gh release view windows >/dev/null 2>&1 || gh release create windows --title "Scribe for Windows $V" --notes "The newest Scribe for Windows. Download Scribe-setup.exe and open it." --latest=false
+          gh release upload windows Scribe-setup.exe --clobber
+          gh release edit windows --title "Scribe for Windows $V" --latest=false
