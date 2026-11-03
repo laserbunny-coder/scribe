@@ -5,13 +5,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * A mode: how a dictation is rewritten (Text message, Email, …), and which
- * Claude does it ("haiku", "sonnet" or "opus"; empty = keep the server's).
+ * A mode: how a dictation is rewritten (Text message, Email, …), which
+ * Claude does it ("haiku", "sonnet" or "opus"; empty = keep the server's),
+ * and whether the recording and its words are kept in Inkwell, on that day's
+ * page (null = keep the server's).
  */
-data class Mode(val id: String, val name: String, val prompt: String, val apps: List<String>, val model: String = "") {
+data class Mode(val id: String, val name: String, val prompt: String, val apps: List<String>, val model: String = "", val keep: Boolean? = null) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("prompt", prompt).put("apps", JSONArray(apps))
         .apply { if (model.isNotEmpty()) put("model", model) }
+        .apply { if (keep != null) put("keep", keep) }
 
     companion object {
         fun from(o: JSONObject): Mode {
@@ -20,6 +23,7 @@ data class Mode(val id: String, val name: String, val prompt: String, val apps: 
                 o.optString("id"), o.optString("name"), o.optString("prompt"),
                 (0 until apps.length()).map { apps.getString(it) },
                 o.optString("model"),
+                if (o.has("keep")) o.optBoolean("keep") else null,
             )
         }
     }

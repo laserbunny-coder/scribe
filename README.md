@@ -37,7 +37,8 @@ the tray. Press Ctrl + Shift + Space anywhere, talk, and press it again.
   into the `windows` release (`.github/workflows/windows.yml`).
 - The server step is the `scribe` function in the **daybook** repo
   (`supabase/functions/scribe`), beside Inkwell's. It writes recordings out
-  with the same speech service as Inkwell's Capture (OpenAI) and has Claude
+  with the same speech service as Inkwell's Capture (ElevenLabs, listening
+  for the names in your Inkwell worlds; OpenAI as backup) and has Claude
   rewrite them in the chosen mode. Modes live per person in the `scribe_modes`
   table, starting from `supabase/functions/scribe/modes.ts`.
 - The phone connects through Inkwell: Scribe opens Inkwell at
@@ -46,3 +47,9 @@ the tray. Press Ctrl + Shift + Space anywhere, talk, and press it again.
 - Every push to main builds a new APK (`.github/workflows/android.yml`) and
   publishes it as the latest release. `app/scribe.keystore` signs every build
   with the same key so a new one installs over the old.
+- Keep in Inkwell: a mode with this on (Idea, Journal and Scene to start)
+  files each recording, with what was heard and what was typed in, on that
+  day's Inkwell page (`scribe/keep.ts` in daybook). Inkwell writes it up like
+  a Capture the next time it syncs: the recording, the mode's chip, the words
+  word for word one tap away. The phone and the computer still delete their
+  own copy once the words are back; the kept one is in Inkwell.

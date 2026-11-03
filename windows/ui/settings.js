@@ -74,7 +74,7 @@ async function render() {
     el('p', { className: 'dim', textContent: 'Shared with your phone. Click one to read or change it. While talking, Ctrl + Shift + S switches mode; Scribe remembers your pick for that program.' }),
     ...modes().map((m) => (editing && editing.id === m.id ? editor(m) : el('div', {
       className: 'card mode', onclick: () => { editing = m; render(); }
-    }, el('strong', { textContent: m.name }), el('span', { className: 'dim', textContent: `  ·  ${modelName(m.model)}` }), el('div', { className: 'prompt', textContent: m.prompt || 'As you said it.' })))),
+    }, el('strong', { textContent: m.name }), el('span', { className: 'dim', textContent: `  ·  ${modelName(m.model)}${m.keep ? '  ·  Kept in Inkwell' : ''}` }), el('div', { className: 'prompt', textContent: m.prompt || 'As you said it.' })))),
     editing && !editing.id ? editor(editing) : el('div', { className: 'row' }, button('New mode', 'btn', () => { editing = {}; render(); })),
 
     el('h2', { textContent: 'Keys' }),
@@ -111,16 +111,19 @@ function editor(m) {
   const prompt = el('textarea', { value: m.prompt || '', placeholder: 'How it writes, in plain words' });
   const apps = el('input', { value: (m.apps || []).join(', '), placeholder: 'Programs it picks itself in, like slack.exe, or Gmail' });
   const model = el('select', {}, ...MODELS.map(([id, label]) => el('option', { value: id, textContent: label, selected: (m.model || (m.id ? 'opus' : 'haiku')) === id })));
+  // Keep in Inkwell: the recording and its words go on that day's Inkwell page.
+  const keep = el('input', { type: 'checkbox', style: 'width:auto;margin:0', checked: m.keep ?? ['idea', 'journal', 'scene'].includes(m.id) });
+  const keepRow = el('label', { className: 'switch', style: 'margin:10px 0' }, keep, el('span', { textContent: 'Keep in Inkwell: the recording and its words go on that day’s page' }));
   const error = el('p', { className: 'error' });
   const save = async () => {
-    const mode = { id: m.id || '', name: name.value.trim(), prompt: prompt.value.trim(), apps: apps.value.split(',').map((a) => a.trim()).filter(Boolean), model: model.value };
+    const mode = { id: m.id || '', name: name.value.trim(), prompt: prompt.value.trim(), apps: apps.value.split(',').map((a) => a.trim()).filter(Boolean), model: model.value, keep: keep.checked };
     if (!mode.name) { error.textContent = 'A mode needs a name.'; return; }
     try { await api('', { body: { action: 'save-mode', mode } }); await refreshModes(); editing = null; render(); } catch (e) { error.textContent = e.message; }
   };
   const remove = async () => {
     try { await api('', { body: { action: 'delete-mode', id: m.id } }); await refreshModes(); editing = null; render(); } catch (e) { error.textContent = e.message; }
   };
-  return el('div', { className: 'card' }, el('strong', { textContent: m.id ? m.name : 'New mode' }), name, prompt, model, apps, error,
+  return el('div', { className: 'card' }, el('strong', { textContent: m.id ? m.name : 'New mode' }), name, prompt, model, apps, keepRow, error,
     el('div', { className: 'row' }, button('Save', 'btn fill', save), button('Cancel', 'btn', () => { editing = null; render(); }),
       m.id && button('Remove', 'btn plain', remove)));
 }
