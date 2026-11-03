@@ -12,13 +12,15 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
 
-/** What a recording is for: words to type in, or a mode described out loud. */
+/** What a recording is for: words to type in, a mode described out loud, or just to keep in Inkwell (the Record tile). */
 sealed class Purpose {
+    object Keep : Purpose()
     data class Dictate(val mode: String, val app: String, val field: String) : Purpose()
     /** `current` is the mode being changed (saved or still a draft); null for a new one. */
     data class MakeMode(val current: Mode?) : Purpose()
 
     fun toJson(): JSONObject = when (this) {
+        is Keep -> JSONObject().put("kind", "keep")
         is Dictate -> JSONObject().put("kind", "dictate").put("mode", mode).put("app", app).put("field", field)
         is MakeMode -> JSONObject().put("kind", "make-mode").put("current", current?.toJson())
     }
@@ -26,6 +28,7 @@ sealed class Purpose {
     companion object {
         fun from(o: JSONObject): Purpose = when (o.optString("kind")) {
             "make-mode" -> MakeMode(o.optJSONObject("current")?.let { Mode.from(it) })
+            "keep" -> Keep
             else -> Dictate(o.optString("mode"), o.optString("app"), o.optString("field"))
         }
     }
@@ -91,6 +94,7 @@ object Scribe {
         state = s
         main.post { listeners.toList().forEach { it() } }
         RecordService.update(app)
+        RecordTile.refresh(app)
     }
 
     // ---- Recording ----
@@ -193,10 +197,17 @@ object Scribe {
             ?.let { try { Purpose.from(JSONObject(it)) } catch (e: Exception) { null } }
             ?: Purpose.Dictate(store.modes.first().id, "", "")
         val ms = store.pendingMs
-        set(State.Working(if (purpose is Purpose.MakeMode) "Making the mode…" else "Writing it out…"))
+        set(State.Working(when (purpose) { is Purpose.MakeMode -> "Making the mode…"; is Purpose.Keep -> "Putting it in Inkwell…"; else -> "Writing it out…" }))
         work.execute {
             try {
                 when (purpose) {
+                    is Purpose.Keep -> {
+                        // Inkwell is the only place it goes, so it's let go only once Inkwell has it.
+                        val o = api.keep(audio, ms)
+                        done()
+                        set(State.Idle)
+                        Kept.done(app, o.optString("title"), o.optString("name"))
+                    }
                     is Purpose.Dictate -> {
                         val o = api.dictate(audio, purpose.mode, purpose.app, ms)
                         done()
@@ -223,9 +234,11 @@ object Scribe {
                 val keep = e.status == 0 || e.status >= 500 || e.status == 429 || e.code == "not-connected"
                 if (!keep) done()
                 set(State.Failed(e.message ?: "Something went wrong.", keep))
+                if (purpose is Purpose.Keep) Kept.failed(app, e.message ?: "Something went wrong.", keep)
             } catch (e: Exception) {
                 Log.e(TAG, "process", e)
                 set(State.Failed("Something went wrong. Your recording is kept; tap Retry.", true))
+                if (purpose is Purpose.Keep) Kept.failed(app, "Something went wrong. Your recording is kept.", true)
             }
         }
     }

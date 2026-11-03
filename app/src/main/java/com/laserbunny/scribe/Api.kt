@@ -27,6 +27,10 @@ class Api(private val store: Store) {
     fun dictate(audio: File, mode: String, app: String, durationMs: Long): JSONObject =
         upload(audio, mapOf("mode" to mode, "app" to app, "duration" to durationMs.toString()))
 
+    /** The Record tile: written up and filed in Inkwell, nothing typed. Answers once Inkwell has it. */
+    fun keep(audio: File, durationMs: Long): JSONObject =
+        upload(audio, mapOf("action" to "keep", "duration" to durationMs.toString()))
+
     /** The same words again in another mode. */
     fun redo(original: String, mode: String, app: String): JSONObject =
         call("POST", "/scribe", JSONObject().put("action", "redo").put("original", original).put("mode", mode).put("app", app), null)
