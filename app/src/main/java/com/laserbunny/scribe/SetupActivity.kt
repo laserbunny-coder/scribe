@@ -30,6 +30,9 @@ class SetupActivity : Activity() {
     companion object {
         /** Intent extra: the id of a mode to open for typing into. */
         const val EDIT = "edit"
+        /** Intent extras: a mode from the keyboard not saved yet (as JSON), and the part just added to it. */
+        const val DRAFT = "draft"
+        const val ADDED = "added"
     }
 
     private val main = Handler(Looper.getMainLooper())
