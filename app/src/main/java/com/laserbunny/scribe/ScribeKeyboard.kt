@@ -175,7 +175,12 @@ class ScribeKeyboard : InputMethodService() {
         val drafting = s is State.Draft || (s is State.Recording && s.purpose is Purpose.MakeMode)
         (chips.parent as View).visibility = if (drafting) View.GONE else View.VISIBLE
         if (drafting) {
-            note.text = if (s is State.Recording) "Say what the mode should do, and which apps it’s for." else ""
+            val changing = ((s as? State.Recording)?.purpose as? Purpose.MakeMode)?.current
+            note.text = when {
+                s !is State.Recording -> ""
+                changing != null -> "Say what to add or change in ${changing.name.ifEmpty { "this mode" }}. The rest stays as it is."
+                else -> "Say what the mode should do, and which apps it’s for."
+            }
             note.visibility = if (note.text.isEmpty()) View.GONE else View.VISIBLE
             return
         }
@@ -369,14 +374,22 @@ class ScribeKeyboard : InputMethodService() {
         card.background = shape(C.SURFACE, 16, C.BORDER, 1)
         card.setPadding(dp(14), dp(12), dp(14), dp(12))
         card.addView(label(s.mode.name.ifEmpty { "New mode" }, 16f, C.TEXT, true))
-        card.addView(label(s.mode.prompt.ifEmpty { "(Says it as you said it.)" }, 13f, C.TEXT).apply { maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.END }.margins(this, t = 4))
-        card.addView(label("Written by " + Store.modelName(s.mode.model), 12f, C.DIM).margins(this, t = 6))
-        if (s.mode.apps.isNotEmpty()) card.addView(label("Picks itself in: " + s.mode.apps.joinToString(", ") { appName(it) }, 12f, C.DIM).margins(this, t = 6))
+        // The whole instruction, scrolling if it's long; what was just added shows in blue.
+        val text = android.text.SpannableStringBuilder(s.mode.prompt.ifEmpty { "(Says it as you said it.)" })
+        val at = if (s.added.isNotEmpty()) text.lastIndexOf(s.added) else -1
+        if (at >= 0) text.setSpan(android.text.style.ForegroundColorSpan(C.ACCENT), at, at + s.added.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        card.addView(android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = true
+            addView(label(text, 13f, C.TEXT))
+            if (at >= 0) post { fullScroll(View.FOCUS_DOWN) }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(4) })
+        if (at >= 0) card.addView(label("Added to the end. Everything before it is unchanged.", 12f, C.DIM).margins(this, t = 6))
         c.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         val r = row(this)
         r.addView(pill("Say a change", "rec", C.REC).apply { setOnClickListener { record(Purpose.MakeMode(s.mode)) } }, wrap(weight = 1f))
         if (unchanged) {
-            r.addView(pill("Remove", "plain", C.BAD).apply { setOnClickListener { Scribe.deleteMode(s.mode.id) } }.margins(this, l = 4))
+            // Typing or pasting happens in Scribe's own screen (Remove is there too).
+            r.addView(pill("Type", "plain", C.TEXT).apply { setOnClickListener { Scribe.typeInto(this@ScribeKeyboard, s.mode) } }.margins(this, l = 4))
             r.addView(pill("Done", "filled").apply { setOnClickListener { Scribe.dismiss() } }.margins(this, l = 4), wrap(weight = 1f))
         } else {
             r.addView(pill("Cancel", "plain", C.DIM).apply { setOnClickListener { Scribe.dismiss() } }.margins(this, l = 4))

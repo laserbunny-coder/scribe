@@ -38,8 +38,8 @@ sealed class State {
     /** A dictation came back (and is typed in, or waiting to be). */
     data class Done(val result: Result, val warning: String?) : State()
     data class Failed(val message: String, val canRetry: Boolean) : State()
-    /** A mode Claude drafted from what was said, waiting for Save. */
-    data class Draft(val mode: Mode, val said: String) : State()
+    /** A mode Claude drafted from what was said, waiting for Save; `added` is what went on the end of it. */
+    data class Draft(val mode: Mode, val said: String, val added: String = "") : State()
 }
 
 /** Text for the keyboard to type in; `replace` is text it typed just before, to swap out. */
@@ -215,7 +215,7 @@ object Scribe {
                         done()
                         val m = o.getJSONObject("mode")
                         val id = purpose.current?.id ?: ""
-                        set(State.Draft(Mode.from(m).copy(id = id), o.optString("said")))
+                        set(State.Draft(Mode.from(m).copy(id = id), o.optString("said"), o.optString("added")))
                     }
                 }
             } catch (e: ScribeError) {
@@ -345,5 +345,13 @@ object Scribe {
     /** Opens Scribe's own screen (to connect, or allow the microphone). */
     fun openApp(context: Context) {
         context.startActivity(Intent(context, SetupActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /** Scribe's own screen with a mode open for typing into (or pasting over). */
+    fun typeInto(context: Context, mode: Mode) {
+        if (state is State.Draft) set(State.Idle)
+        context.startActivity(Intent(context, SetupActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(SetupActivity.EDIT, mode.id))
     }
 }
