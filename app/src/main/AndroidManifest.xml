@@ -45,6 +45,28 @@
             <meta-data android:name="android.view.im" android:resource="@xml/method" />
         </service>
 
+        <!-- The Record tile's see-through screen: starts the microphone, then closes. -->
+        <activity
+            android:name=".RecordActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- "Record" in quick settings: a recording that goes only to Inkwell. -->
+        <service
+            android:name=".RecordTile"
+            android:exported="true"
+            android:icon="@drawable/ic_mic"
+            android:label="Record"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.ACTIVE_TILE" android:value="false" />
+        </service>
+
         <!-- Keeps the microphone going while the screen is off or another app is on top. -->
         <service
             android:name=".RecordService"

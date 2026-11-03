@@ -53,3 +53,10 @@ the tray. Press Ctrl + Shift + Space anywhere, talk, and press it again.
   a Capture the next time it syncs: the recording, the mode's chip, the words
   word for word one tap away. The phone and the computer still delete their
   own copy once the words are back; the kept one is in Inkwell.
+- Record tile: "Record" in the phone's pull-down quick settings (add it with
+  the pencil there). Tap it, talk with the screen off, tap it again (or Stop
+  in the notification). Nothing is typed: the server writes it up the way
+  Inkwell's Capture would (Claude picks the mode, adds a title) and files it
+  on today's Inkwell page (`action=keep`). The phone keeps the recording until
+  Inkwell has it; a notification says it's kept, or offers another try.
+  `RecordTile`, `RecordActivity` (see-through, starts the mic), `Kept`.
