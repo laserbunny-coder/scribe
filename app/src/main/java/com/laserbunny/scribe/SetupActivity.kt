@@ -27,6 +27,11 @@ import java.util.concurrent.Executors
  */
 class SetupActivity : Activity() {
 
+    companion object {
+        /** Intent extra: the id of a mode to open for typing into. */
+        const val EDIT = "edit"
+    }
+
     private val main = Handler(Looper.getMainLooper())
     private val work = Executors.newSingleThreadExecutor()
     private lateinit var page: LinearLayout
@@ -42,11 +47,21 @@ class SetupActivity : Activity() {
             addView(page)
         })
         connectFrom(intent)
+        editFrom(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         connectFrom(intent)
+        editFrom(intent)
+    }
+
+    /** "Type" on the keyboard opens the mode here, ready to type into. */
+    private fun editFrom(intent: Intent?) {
+        val id = intent?.getStringExtra(EDIT) ?: return
+        intent.removeExtra(EDIT)
+        Scribe.store.modes.firstOrNull { it.id == id }?.let { main.post { editMode(it) } }
     }
 
     override fun onResume() {
@@ -188,9 +203,23 @@ class SetupActivity : Activity() {
             setText(m.prompt)
             hint = "How it writes, in plain words"
             minLines = 4
+            maxLines = 10
+            isVerticalScrollBarEnabled = true
             gravity = Gravity.TOP
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            // Ready to add to the end, which is what most changes are.
+            setSelection(text.length)
         }
+        // A prompt written with Claude elsewhere: copy it there, then this swaps it in.
+        val paste = pill("Paste over it").apply {
+            setOnClickListener {
+                val clip = getSystemService(android.content.ClipboardManager::class.java)!!.primaryClip
+                val copied = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).coerceToText(this@SetupActivity).toString().trim() else ""
+                if (copied.isEmpty()) toast("Copy the new prompt first, then tap this")
+                else { prompt.setText(copied); prompt.setSelection(prompt.text.length); toast("Pasted. Save keeps it, Cancel puts the old one back.") }
+            }
+        }
+        val tip = label("Type at the end to add to it, or paste in a whole new prompt.", 12f, C.DIM)
         val apps = EditText(this).apply {
             setText(m.apps.joinToString(", "))
             hint = "Apps it picks itself in (app ids)"
@@ -205,7 +234,7 @@ class SetupActivity : Activity() {
             text = "Keep in Inkwell: the recording and its words go on that day's page"
             isChecked = m.keep ?: (m.id in setOf("idea", "journal", "scene"))
         }
-        box.addView(name); box.addView(prompt); box.addView(models); box.addView(apps); box.addView(keep)
+        box.addView(name); box.addView(prompt); box.addView(tip.margins(this, l = 4, b = 6)); box.addView(paste.margins(this, b = 8)); box.addView(models); box.addView(apps); box.addView(keep)
         val d = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(if (m.id.isEmpty()) "New mode" else m.name)
             .setView(box)

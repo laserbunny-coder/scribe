@@ -6,7 +6,8 @@ import {
 
 const T = window.__TAURI__;
 const page = document.getElementById('page');
-let editing = null; // the mode open for changes ({} for a new one)
+let editing = null; // the mode open for changes ({} for a new one), with what's been typed or said into it so far
+let listening = null; // a spoken change being recorded: { recorder, stream, chunks, type, started }
 let message = '';
 let update = null;
 // Kept across redraws so what you tried isn't wiped.
@@ -72,10 +73,10 @@ async function render() {
 
     el('h2', { textContent: 'Your modes' }),
     el('p', { className: 'dim', textContent: 'Shared with your phone. Click one to read or change it. While talking, Ctrl + Shift + S switches mode; Scribe remembers your pick for that program.' }),
-    ...modes().map((m) => (editing && editing.id === m.id ? editor(m) : el('div', {
-      className: 'card mode', onclick: () => { editing = m; render(); }
+    ...modes().map((m) => (editing && editing.id === m.id ? editor(editing) : el('div', {
+      className: 'card mode', onclick: () => { stopListening(); editing = { ...m }; render(); }
     }, el('strong', { textContent: m.name }), el('span', { className: 'dim', textContent: `  ·  ${modelName(m.model)}${m.keep ? '  ·  Kept in Inkwell' : ''}` }), el('div', { className: 'prompt', textContent: m.prompt || 'As you said it.' })))),
-    editing && !editing.id ? editor(editing) : el('div', { className: 'row' }, button('New mode', 'btn', () => { editing = {}; render(); })),
+    editing && !editing.id ? editor(editing) : el('div', { className: 'row' }, button('New mode', 'btn', () => { stopListening(); editing = {}; render(); })),
 
     el('h2', { textContent: 'Keys' }),
     el('div', { className: 'card keys' },
@@ -108,24 +109,100 @@ function keyRow(keys, what) {
 
 function editor(m) {
   const name = el('input', { value: m.name || '', placeholder: 'Name, like Work Slack' });
-  const prompt = el('textarea', { value: m.prompt || '', placeholder: 'How it writes, in plain words' });
+  const prompt = el('textarea', { value: m.prompt || '', placeholder: 'How it writes, in plain words', className: 'prompt-box' });
   const apps = el('input', { value: (m.apps || []).join(', '), placeholder: 'Programs it picks itself in, like slack.exe, or Gmail' });
   const model = el('select', {}, ...MODELS.map(([id, label]) => el('option', { value: id, textContent: label, selected: (m.model || (m.id ? 'opus' : 'haiku')) === id })));
   // Keep in Inkwell: the recording and its words go on that day's Inkwell page.
   const keep = el('input', { type: 'checkbox', style: 'width:auto;margin:0', checked: m.keep ?? ['idea', 'journal', 'scene'].includes(m.id) });
   const keepRow = el('label', { className: 'switch', style: 'margin:10px 0' }, keep, el('span', { textContent: 'Keep in Inkwell: the recording and its words go on that day’s page' }));
-  const error = el('p', { className: 'error' });
+  const error = el('p', { className: m.status?.bad ? 'error' : 'dim', textContent: m.status?.text || '' });
+  const fail = (text) => { error.className = 'error'; error.textContent = text; };
+  const note = el('p', { className: 'dim', textContent: m.added ? '' : 'Type at the end to add to it, paste in a whole new prompt, or say what to change.' });
+  if (m.added) note.append('Added to the end (not saved yet): ', el('span', { className: 'added', textContent: m.added }));
+  // What's in the boxes now, so a redraw or a spoken change starts from it.
+  const now = () => ({ ...m, status: null, name: name.value.trim(), prompt: prompt.value.trim(), apps: apps.value.split(',').map((a) => a.trim()).filter(Boolean), model: model.value, keep: keep.checked });
+  // Kept as you type, so a redraw (Scribe refreshes when the window gets focus) doesn't wipe it.
+  for (const box of [name, prompt, apps, model, keep]) box.addEventListener(box === keep || box === model ? 'change' : 'input', () => { if (editing) Object.assign(editing, now(), { status: m.status }); });
   const save = async () => {
-    const mode = { id: m.id || '', name: name.value.trim(), prompt: prompt.value.trim(), apps: apps.value.split(',').map((a) => a.trim()).filter(Boolean), model: model.value, keep: keep.checked };
-    if (!mode.name) { error.textContent = 'A mode needs a name.'; return; }
-    try { await api('', { body: { action: 'save-mode', mode } }); await refreshModes(); editing = null; render(); } catch (e) { error.textContent = e.message; }
+    stopListening();
+    const { added, status, ...rest } = now();
+    const mode = { ...rest, id: m.id || '' };
+    if (!mode.name) { fail('A mode needs a name.'); return; }
+    try { await api('', { body: { action: 'save-mode', mode } }); await refreshModes(); editing = null; render(); } catch (e) { fail(e.message); }
   };
   const remove = async () => {
-    try { await api('', { body: { action: 'delete-mode', id: m.id } }); await refreshModes(); editing = null; render(); } catch (e) { error.textContent = e.message; }
+    try { await api('', { body: { action: 'delete-mode', id: m.id } }); await refreshModes(); editing = null; render(); } catch (e) { fail(e.message); }
   };
-  return el('div', { className: 'card' }, el('strong', { textContent: m.id ? m.name : 'New mode' }), name, prompt, model, apps, keepRow, error,
-    el('div', { className: 'row' }, button('Save', 'btn fill', save), button('Cancel', 'btn', () => { editing = null; render(); }),
+  // A prompt written with Claude in another window: copy it there, then this swaps it in.
+  const paste = async () => {
+    const text = String(await invoke('read_clipboard').catch(() => '') || '').trim();
+    if (!text) { fail('Copy the new prompt first, then click Paste over it.'); return; }
+    if (/^scribe:\/\/connect/.test(text)) { fail('That’s the connect link, not a prompt.'); return; }
+    editing = { ...now(), prompt: text, added: '' };
+    render();
+  };
+  const say = async () => {
+    if (listening) { await changeBySpeaking(now()); return; }
+    editing = now();
+    await startListening(error);
+  };
+  const sayLabel = listening ? 'Stop, and add it' : 'Say a change';
+  return el('div', { className: 'card' }, el('strong', { textContent: m.id ? m.name : 'New mode' }), name, prompt, note, model, apps, keepRow, error,
+    el('div', { className: 'row' }, button('Save', 'btn fill', save), button('Cancel', 'btn', () => { stopListening(); editing = null; render(); }),
+      button(sayLabel, listening ? 'btn rec on' : 'btn rec', say), button('Paste over it', 'btn', paste),
       m.id && button('Remove', 'btn plain', remove)));
+}
+
+// ---- Changing a mode by saying it: "also break long ones into paragraphs". ----
+async function startListening(error) {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch {
+    error.className = 'error';
+    error.textContent = 'Scribe can’t use the microphone. In Windows, open Settings > Privacy & security > Microphone and let desktop apps use it.';
+    return;
+  }
+  const type = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+  const recorder = new MediaRecorder(stream, { mimeType: type, audioBitsPerSecond: 32000 });
+  const chunks = [];
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.start(1000);
+  listening = { recorder, stream, chunks, type, started: Date.now() };
+  render();
+}
+
+/** Ends a recording; its audio, or null if there wasn't one. */
+async function stopListening() {
+  if (!listening) return null;
+  const r = listening;
+  listening = null;
+  const done = new Promise((resolve) => { r.recorder.onstop = resolve; });
+  if (r.recorder.state !== 'inactive') r.recorder.stop();
+  await done;
+  r.stream.getTracks().forEach((t) => t.stop());
+  return { audio: new Blob(r.chunks, { type: r.type }), ms: Date.now() - r.started };
+}
+
+async function changeBySpeaking(current) {
+  const got = await stopListening();
+  if (!got) return;
+  editing = { ...current, added: '', status: { text: 'Working it in…' } };
+  await render();
+  const form = new FormData();
+  form.append('action', 'make-mode');
+  form.append('audio', got.audio, 'change.webm');
+  form.append('duration', String(Math.round(got.ms)));
+  const { added, status, ...mode } = current;
+  form.append('current', JSON.stringify({ ...mode, id: mode.id || '' }));
+  try {
+    const res = await api('', { form });
+    // Nothing is saved until Save; Cancel leaves the mode as it was.
+    if (editing) editing = { ...current, ...res.mode, id: current.id, keep: current.keep, added: res.added || '', status: null };
+  } catch (e) {
+    if (editing) editing = { ...current, status: { text: e.message, bad: true } };
+  }
+  render();
 }
 
 async function checkForUpdate() {
