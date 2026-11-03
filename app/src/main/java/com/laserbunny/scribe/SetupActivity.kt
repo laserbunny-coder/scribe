@@ -60,8 +60,12 @@ class SetupActivity : Activity() {
     /** "Type" on the keyboard opens the mode here, ready to type into. */
     private fun editFrom(intent: Intent?) {
         val id = intent?.getStringExtra(EDIT) ?: return
-        intent.removeExtra(EDIT)
-        Scribe.store.modes.firstOrNull { it.id == id }?.let { main.post { editMode(it) } }
+        val draft = intent.getStringExtra(DRAFT)?.let { try { Mode.from(org.json.JSONObject(it)) } catch (e: Exception) { null } }
+        val added = intent.getStringExtra(ADDED) ?: ""
+        intent.removeExtra(EDIT); intent.removeExtra(DRAFT); intent.removeExtra(ADDED)
+        val mode = draft ?: Scribe.store.modes.firstOrNull { it.id == id } ?: return
+        val unsaved = Scribe.store.modes.firstOrNull { it.id == mode.id } != mode
+        main.post { editMode(mode, added, unsaved) }
     }
 
     override fun onResume() {
@@ -196,11 +200,15 @@ class SetupActivity : Activity() {
     }
 
     /** Read or type changes into a mode. */
-    private fun editMode(m: Mode) {
+    private fun editMode(m: Mode, added: String = "", unsaved: Boolean = false) {
         val box = column(this).apply { setPadding(dp(20), dp(8), dp(20), 0) }
         val name = EditText(this).apply { setText(m.name); hint = "Name, like Work Slack"; setSingleLine() }
         val prompt = EditText(this).apply {
-            setText(m.prompt)
+            // What was just said into it shows in blue.
+            val shown = android.text.SpannableStringBuilder(m.prompt)
+            val at = if (added.isNotEmpty()) m.prompt.lastIndexOf(added) else -1
+            if (at >= 0) shown.setSpan(android.text.style.ForegroundColorSpan(C.ACCENT), at, at + added.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setText(shown)
             hint = "How it writes, in plain words"
             minLines = 4
             maxLines = 10
@@ -219,7 +227,9 @@ class SetupActivity : Activity() {
                 else { prompt.setText(copied); prompt.setSelection(prompt.text.length); toast("Pasted. Save keeps it, Cancel puts the old one back.") }
             }
         }
-        val tip = label("Type at the end to add to it, or paste in a whole new prompt.", 12f, C.DIM)
+        val tip = label((if (unsaved) "Not saved yet: tap Save to keep it. " else "") +
+            (if (added.isNotEmpty()) "Blue is what you just added. " else "") +
+            "Type at the end to add to it, or paste in a whole new prompt.", 12f, C.DIM)
         val apps = EditText(this).apply {
             setText(m.apps.joinToString(", "))
             hint = "Apps it picks itself in (app ids)"
