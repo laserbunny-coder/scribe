@@ -378,12 +378,15 @@ class ScribeKeyboard : InputMethodService() {
         val text = android.text.SpannableStringBuilder(s.mode.prompt.ifEmpty { "(Says it as you said it.)" })
         val at = if (s.added.isNotEmpty()) text.lastIndexOf(s.added) else -1
         if (at >= 0) text.setSpan(android.text.style.ForegroundColorSpan(C.ACCENT), at, at + s.added.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        // Tapping the text opens it whole in Scribe's own screen, to read, type into or save.
+        val open = View.OnClickListener { Scribe.typeInto(this, s.mode, s.added) }
         card.addView(android.widget.ScrollView(this).apply {
             isVerticalScrollBarEnabled = true
-            addView(label(text, 13f, C.TEXT))
+            addView(label(text, 13f, C.TEXT).apply { setOnClickListener(open) })
             if (at >= 0) post { fullScroll(View.FOCUS_DOWN) }
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(4) })
-        if (at >= 0) card.addView(label("Added to the end. Everything before it is unchanged.", 12f, C.DIM).margins(this, t = 6))
+        card.setOnClickListener(open)
+        card.addView(label(if (at >= 0) "Blue is new; the rest is unchanged. Tap to read it all." else "Tap to read it all or type into it.", 12f, C.DIM).margins(this, t = 6))
         c.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         val r = row(this)
         r.addView(pill("Say a change", "rec", C.REC).apply { setOnClickListener { record(Purpose.MakeMode(s.mode)) } }, wrap(weight = 1f))

@@ -361,10 +361,17 @@ object Scribe {
     }
 
     /** Scribe's own screen with a mode open for typing into (or pasting over). */
-    fun typeInto(context: Context, mode: Mode) {
+    /**
+     * Scribe's own screen with a mode open to read in full, type into or
+     * paste over. A draft that isn't saved yet goes along whole (with what
+     * was just added), so it can be read and saved there.
+     */
+    fun typeInto(context: Context, mode: Mode, added: String = "") {
         if (state is State.Draft) set(State.Idle)
         context.startActivity(Intent(context, SetupActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(SetupActivity.EDIT, mode.id))
+            .putExtra(SetupActivity.EDIT, mode.id)
+            .putExtra(SetupActivity.DRAFT, mode.toJson().toString())
+            .putExtra(SetupActivity.ADDED, added))
     }
 }
