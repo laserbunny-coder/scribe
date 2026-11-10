@@ -39,6 +39,8 @@ class SetupActivity : Activity() {
     private val work = Executors.newSingleThreadExecutor()
     private lateinit var page: LinearLayout
     private val changed: () -> Unit = { render() }
+    /** Spellings Scribe remembers (null until fetched). */
+    private var spellings: List<String>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +78,12 @@ class SetupActivity : Activity() {
         Scribe.listen(changed)
         Scribe.refreshModes()
         render()
+        if (Scribe.store.connected) work.execute {
+            try {
+                val got = Api(Scribe.store).spellings()
+                main.post { spellings = got; render() }
+            } catch (e: Exception) { /* shown again next time */ }
+        }
     }
 
     override fun onPause() {
@@ -170,6 +178,35 @@ class SetupActivity : Activity() {
             page.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
         }
         page.addView(pill("New mode").apply { setOnClickListener { editMode(Mode("", "", "", emptyList())) } }.margins(this, t = 4))
+
+        page.addView(label("Fixing by voice", 20f, C.TEXT, true).margins(this, t = 32, b = 4))
+        page.addView(label("On the keyboard, hold Fix and say what to change: “make it Tuesday”, “make that friendlier”, “Nate, N A T E”. It changes what Scribe just typed, or the words you selected. When you correct a name, tap Remember and Scribe listens for that spelling from then on.", 13f, C.DIM).margins(this, b = 12))
+        val known = spellings
+        when {
+            known == null -> {}
+            known.isEmpty() -> page.addView(label("No spellings remembered yet.", 13f, C.DIM))
+            else -> {
+                page.addView(label("Spellings Scribe remembers", 15f, C.TEXT, true).margins(this, b = 6))
+                for (term in known) {
+                    val r = row(this)
+                    r.addView(label(term, 15f, C.TEXT), wrap(weight = 1f))
+                    r.addView(pill("Remove", "plain", C.DIM).apply {
+                        contentDescription = "Stop listening for $term"
+                        setOnClickListener {
+                            work.execute {
+                                try {
+                                    val left = Api(Scribe.store).forget(term)
+                                    main.post { spellings = left; render() }
+                                } catch (e: Exception) {
+                                    main.post { toast(e.message ?: "Couldn’t remove that. Try again.") }
+                                }
+                            }
+                        }
+                    })
+                    page.addView(r)
+                }
+            }
+        }
 
         Scribe.store.last?.let { last ->
             page.addView(label("Last dictation", 20f, C.TEXT, true).margins(this, t = 32, b = 8))

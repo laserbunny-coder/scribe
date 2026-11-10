@@ -23,7 +23,9 @@ import android.widget.TextView
 
 /**
  * The Scribe keyboard: mode chips, one big record button, and the few keys
- * you need around a dictation (back to your usual keyboard, delete, enter).
+ * you need around a dictation (back to your usual keyboard, delete, enter,
+ * a little punctuation). Hold Fix and say what to change in what was just
+ * typed, or in words you selected.
  * The words go in through the text box's own connection, never the clipboard,
  * and a result that can't go in right away waits here with a button.
  */
@@ -36,6 +38,11 @@ class ScribeKeyboard : InputMethodService() {
     private lateinit var body: FrameLayout
     private var timer: TextView? = null
     private var level: LevelView? = null
+
+    // Fix: held down while talking, let go to send it off.
+    private var fixButton: TextView? = null
+    private var holdingFix = false
+    private var fixDownAt = 0L
 
     private var app = ""
     private var field = ""
@@ -67,7 +74,7 @@ class ScribeKeyboard : InputMethodService() {
         note = label("", 12f, C.DIM).apply { setPadding(dp(4), dp(8), dp(4), dp(4)) }
         root.addView(note)
         body = FrameLayout(this)
-        root.addView(body, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(196)))
+        root.addView(body, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(224)))
         return root
     }
 
@@ -101,8 +108,19 @@ class ScribeKeyboard : InputMethodService() {
         ic.beginBatchEdit()
         val replace = i.replace
         if (!replace.isNullOrEmpty()) {
+            // Selected words are typed over as they are; otherwise the words go just before the cursor.
+            val selected = if (i.selection) ic.getSelectedText(0)?.toString() else null
             val before = ic.getTextBeforeCursor(replace.length, 0)?.toString()
-            if (before == replace) ic.deleteSurroundingText(replace.length, 0)
+            when {
+                selected == replace -> {}
+                before == replace -> ic.deleteSurroundingText(replace.length, 0)
+                i.strict -> {
+                    // The words moved or changed since: typing the fix in here would only add to them.
+                    ic.endBatchEdit()
+                    Scribe.fixFailed()
+                    return
+                }
+            }
         }
         var sent = true
         if (i.text.isNotEmpty()) {
@@ -135,6 +153,7 @@ class ScribeKeyboard : InputMethodService() {
         val here = before?.let { squash(it) }
         // Can't read the box back: trust it.
         if (sent && (here == null || here.contains(lastTail))) return
+        if (i.strict) { Scribe.fixFailed(); return }
         val nothingWentIn = here != null && !here.contains(firstTail) && !here.contains(lastTail)
         if (!byLines && nothingWentIn && i.text.contains('\n') && multiLine()) {
             Scribe.putBack(i)
@@ -153,9 +172,20 @@ class ScribeKeyboard : InputMethodService() {
 
     private fun render() {
         if (!::root.isInitialized) return
+        val s = Scribe.state
+        // While Fix is held down its button stays put (rebuilding it would drop the finger).
+        if (holdingFix && s is State.Recording) {
+            fixButton?.apply {
+                text = "Listening… let go when done"
+                background = shape(C.REC_DARK, 22, C.REC, 1.5f)
+            }
+            note.text = fixNote((s.purpose as? Purpose.Fix)?.how)
+            note.visibility = View.VISIBLE
+            return
+        }
         timer = null
         level = null
-        val s = Scribe.state
+        fixButton = null
         renderChips(s)
         body.removeAllViews()
         val view = when (s) {
@@ -165,6 +195,7 @@ class ScribeKeyboard : InputMethodService() {
             is State.Done -> done(s)
             is State.Failed -> failed(s)
             is State.Draft -> draft(s)
+            is State.Fixed -> fixed(s)
         }
         body.addView(view, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         if (s is State.Recording) tick()
@@ -173,7 +204,13 @@ class ScribeKeyboard : InputMethodService() {
     private fun renderChips(s: State) {
         chips.removeAllViews()
         val drafting = s is State.Draft || (s is State.Recording && s.purpose is Purpose.MakeMode)
-        (chips.parent as View).visibility = if (drafting) View.GONE else View.VISIBLE
+        val fixing = s is State.Recording && s.purpose is Purpose.Fix
+        (chips.parent as View).visibility = if (drafting || fixing) View.GONE else View.VISIBLE
+        if (fixing) {
+            note.text = fixNote(((s as State.Recording).purpose as Purpose.Fix).how) + " Tap the square when you're done."
+            note.visibility = View.VISIBLE
+            return
+        }
         if (drafting) {
             val changing = ((s as? State.Recording)?.purpose as? Purpose.MakeMode)?.current
             note.text = when {
@@ -186,7 +223,7 @@ class ScribeKeyboard : InputMethodService() {
         }
         val modes = Scribe.store.modes
         val picked = when (s) {
-            is State.Recording -> (s.purpose as Purpose.Dictate).mode
+            is State.Recording -> (s.purpose as? Purpose.Dictate)?.mode ?: Scribe.store.modeFor(app).id
             is State.Done -> s.result.mode
             else -> Scribe.store.modeFor(app).id
         }
@@ -202,11 +239,12 @@ class ScribeKeyboard : InputMethodService() {
         chips.addView(plus)
 
         note.text = when (s) {
-            is State.Done -> s.warning ?: "Tap another mode to redo the same words. Hold a mode to change it."
+            is State.Done -> s.warning ?: "Something wrong? Hold Fix and say the change. Tap another mode to redo it."
+            is State.Fixed -> "Heard: “${s.said.take(120)}”"
             is State.Idle -> {
                 val m = Scribe.store.modeFor(app)
                 if (m.apps.contains(app) && Scribe.store.chosenFor(app) == null) "${m.name} picked itself here. Tap another to switch."
-                else "Hold a mode to change it, or + to make one by talking."
+                else "Hold Fix to change words by voice. Hold a mode to change the mode."
             }
             else -> ""
         }
@@ -223,8 +261,10 @@ class ScribeKeyboard : InputMethodService() {
 
     private fun idle(): View {
         val c = column(this, Gravity.CENTER)
-        Scribe.waitingElsewhere(field)?.let { w -> c.addView(waitingBar(w.text)) }
-        c.addView(controls(bigMic(96, "Tap to talk")), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        val waiting = Scribe.waitingElsewhere(field)
+        waiting?.let { w -> c.addView(waitingBar(w.text).margins(this, b = 8)) }
+        c.addView(fixRow())
+        c.addView(controls(bigMic(if (waiting != null) 80 else 92, "Tap to talk")), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         return c
     }
 
@@ -232,19 +272,19 @@ class ScribeKeyboard : InputMethodService() {
     private fun controls(middle: View): View {
         val r = row(this, Gravity.CENTER_VERTICAL)
         r.setPadding(dp(8), 0, dp(8), 0)
-        val back = iconButton(R.drawable.ic_keyboard, 52, C.KEY, C.TEXT, "Back to your usual keyboard")
+        val back = iconButton(R.drawable.ic_keyboard, 48, C.KEY, C.TEXT, "Back to your usual keyboard")
         back.setOnClickListener { backToKeyboard() }
         r.addView(back)
         r.addView(View(this), wrap(weight = 1f))
         r.addView(middle)
         r.addView(View(this), wrap(weight = 1f))
         val keys = column(this)
-        val del = iconButton(R.drawable.ic_backspace, 52, C.KEY, C.TEXT, "Delete")
+        val del = iconButton(R.drawable.ic_backspace, 48, C.KEY, C.TEXT, "Delete")
         repeatWhileHeld(del) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL) }
-        val enter = iconButton(R.drawable.ic_enter, 52, C.KEY, C.TEXT, "Enter")
+        val enter = iconButton(R.drawable.ic_enter, 48, C.KEY, C.TEXT, "Enter")
         enter.setOnClickListener { enter() }
         keys.addView(del)
-        keys.addView(enter.margins(this, t = 10))
+        keys.addView(enter.margins(this, t = 8))
         r.addView(keys)
         return r
     }
@@ -326,6 +366,7 @@ class ScribeKeyboard : InputMethodService() {
             bar.addView(pill("Try again", "filled").apply { setOnClickListener { typeIn(byLines = true); render() } }.margins(this, r = 6))
             bar.addView(pill("Copy").apply { setOnClickListener { copy(s.result.text); (this as TextView).text = "Copied" } })
             c.addView(bar)
+            c.addView(fixRow().margins(this, t = 8))
             c.addView(controls(column(this, Gravity.CENTER_HORIZONTAL).apply {
                 val mic = iconButton(R.drawable.ic_mic, 72, C.REC, C.BG, "Talk again")
                 mic.setOnClickListener { record(Purpose.Dictate(Scribe.store.modeFor(app).id, app, field)) }
@@ -341,6 +382,7 @@ class ScribeKeyboard : InputMethodService() {
         if (s.result.mode != "original") bar.addView(pill("Original").apply { setOnClickListener { Scribe.redo("original", app) } }.margins(this, r = 6))
         bar.addView(pill("Undo").apply { setOnClickListener { Scribe.undo() } })
         c.addView(bar)
+        c.addView(fixRow().margins(this, t = 8))
         c.addView(controls(column(this, Gravity.CENTER_HORIZONTAL).apply {
             val mic = iconButton(R.drawable.ic_mic, 72, C.REC, C.BG, "Talk again")
             mic.setOnClickListener { record(Purpose.Dictate(Scribe.store.modeFor(app).id, app, field)) }
@@ -351,6 +393,134 @@ class ScribeKeyboard : InputMethodService() {
             })
         }), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         return c
+    }
+
+    /** After a fix: what changed, Remember for a corrected name, and Undo. */
+    private fun fixed(s: State.Fixed): View {
+        val c = column(this)
+        val bar = row(this)
+        bar.background = shape(C.SURFACE, 14)
+        bar.setPadding(dp(12), dp(6), dp(6), dp(6))
+        if (Scribe.typeFailed) {
+            // The words moved, or the box wouldn't take it: offer the fixed words to paste.
+            bar.addView(label("Couldn’t change it in this box", 14f, C.BAD).apply { maxLines = 1 }.margins(this, l = 4), wrap(weight = 1f))
+            bar.addView(pill("Copy fixed").apply { setOnClickListener { copy(s.to); (this as TextView).text = "Copied" } })
+        } else {
+            bar.addView(iconButton(R.drawable.ic_check, 24, 0, C.GOOD, "").apply { isClickable = false; setPadding(0, 0, 0, 0) })
+            bar.addView(label("Changed", 14f).apply { maxLines = 1 }.margins(this, l = 8), wrap(weight = 1f))
+            for (term in s.learn.take(2)) {
+                val kept = term in s.remembered
+                bar.addView(pill(if (kept) "✓ $term" else "Remember $term", if (kept) "plain" else "rec", if (kept) C.GOOD else C.REC).apply {
+                    contentDescription = if (kept) "$term is remembered" else "Remember how $term is spelled"
+                    setOnClickListener { Scribe.remember(term) }
+                }.margins(this, r = 6))
+            }
+            bar.addView(pill("Undo").apply { setOnClickListener { Scribe.undoFix() } })
+        }
+        c.addView(bar)
+        c.addView(fixRow().margins(this, t = 8))
+        c.addView(controls(column(this, Gravity.CENTER_HORIZONTAL).apply {
+            val mic = iconButton(R.drawable.ic_mic, 72, C.REC, C.BG, "Talk again")
+            mic.setOnClickListener { record(Purpose.Dictate(Scribe.store.modeFor(app).id, app, field)) }
+            addView(mic)
+        }), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        return c
+    }
+
+    /** Hold to fix, and the punctuation that's quicker to tap than to say. */
+    private fun fixRow(): View {
+        val r = row(this)
+        r.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        val fix = pill("Hold to fix", "rec", C.REC).apply {
+            contentDescription = "Hold and say what to change, then let go"
+            val mic = getDrawable(R.drawable.ic_mic)!!.mutate()
+            mic.setTint(C.REC)
+            mic.setBounds(0, 0, dp(16), dp(16))
+            setCompoundDrawablesRelative(mic, null, null, null)
+            compoundDrawablePadding = dp(6)
+            setOnTouchListener { v, e -> fixTouch(v as TextView, e) }
+        }
+        fixButton = fix
+        r.addView(fix, wrap(heightDp = 44, weight = 1f, context = this))
+        for ((mark, name) in listOf("," to "Comma", "." to "Full stop", "?" to "Question mark", "!" to "Exclamation mark")) {
+            val key = label(mark, 18f, C.TEXT, true).apply {
+                gravity = Gravity.CENTER
+                background = shape(C.KEY, 12)
+                isClickable = true
+                isFocusable = true
+                contentDescription = name
+                setOnClickListener { it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); punctuate(mark) }
+            }
+            r.addView(key, wrap(40, 44, context = this).apply { marginStart = dp(6) })
+        }
+        return r
+    }
+
+    private fun fixNote(how: String?) = when (how) {
+        "selection" -> "Say what to change in the words you selected."
+        "last" -> "Say what to change in what Scribe just typed."
+        else -> "Say what to change in the line before the cursor."
+    }
+
+    /**
+     * Down starts listening, up sends it off. A quick tap keeps listening
+     * instead, with the usual stop button, for anyone who'd rather not hold.
+     */
+    private fun fixTouch(v: TextView, e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (Scribe.state is State.Recording || Scribe.state is State.Working) return true
+                val target = fixTarget()
+                if (target == null) {
+                    note.text = "Select the words to change first, or dictate something to fix."
+                    note.visibility = View.VISIBLE
+                    return true
+                }
+                if (target.text.length > FIX_MAX) {
+                    note.text = "That’s a lot to change at once. Select a smaller part."
+                    note.visibility = View.VISIBLE
+                    return true
+                }
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                holdingFix = true
+                fixDownAt = SystemClock.uptimeMillis()
+                record(target)
+                if (Scribe.state !is State.Recording) holdingFix = false
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (!holdingFix) return true
+                holdingFix = false
+                val s = Scribe.state
+                if (s is State.Recording && s.purpose is Purpose.Fix) {
+                    val held = SystemClock.uptimeMillis() - fixDownAt >= 450
+                    if (e.actionMasked == MotionEvent.ACTION_UP && held) {
+                        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        Scribe.stop()
+                    } else {
+                        render()
+                    }
+                }
+            }
+        }
+        return true
+    }
+
+    /** What a fix is about, from the text box (see [fixTargetOf]). */
+    private fun fixTarget(): Purpose.Fix? {
+        val ic = currentInputConnection ?: return null
+        val last = Scribe.store.last?.takeIf { it.field == field }?.text
+        val before = ic.getTextBeforeCursor(maxOf(3000, (last?.length ?: 0) + FIX_AROUND), 0)?.toString() ?: return null
+        val after = ic.getTextAfterCursor(FIX_AROUND, 0)?.toString() ?: ""
+        return fixTargetOf(before, after, ic.getSelectedText(0)?.toString(), last, Scribe.store.modeFor(app).id, app, field)
+    }
+
+    /** A comma, full stop, question or exclamation mark goes right after the last word. */
+    private fun punctuate(mark: String) {
+        val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        if (ic.getTextBeforeCursor(1, 0)?.toString() == " ") ic.deleteSurroundingText(1, 0)
+        ic.commitText(mark, 1)
+        ic.endBatchEdit()
     }
 
     private fun failed(s: State.Failed): View {
@@ -404,6 +574,7 @@ class ScribeKeyboard : InputMethodService() {
 
     private fun waitingBar(text: String): View {
         val bar = row(this)
+        bar.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         bar.background = shape(C.SURFACE, 14)
         bar.setPadding(dp(12), dp(6), dp(6), dp(6))
         bar.addView(label("Waiting: “${text.take(40)}${if (text.length > 40) "…" else ""}”", 13f).apply { maxLines = 1 }, wrap(weight = 1f))
