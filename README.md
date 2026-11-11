@@ -63,6 +63,14 @@ the tray. Press Ctrl + Shift + Space anywhere, talk, and press it again.
   it from then on; the Scribe app lists them under "Fixing by voice", each
   with Remove. The , . ? ! keys beside Fix put punctuation right after the
   last word.
+- Floating button (`FloatButton.kt`, an accessibility service): while
+  another keyboard such as SwiftKey is open, an orange Scribe button sits
+  just above it. A tap switches straight to the Scribe keyboard
+  (`SoftKeyboardController.switchToInputMethod`, Android 11+), and Scribe's
+  keyboard key switches back. Drag it to move it; it hides in password
+  boxes. It only looks at whether a keyboard is open and whose it is. Turned
+  on from the Scribe app (Accessibility, then "Allow restricted settings"
+  once for a sideloaded app; on Samsung set battery to Unrestricted).
 - Keep in Inkwell: a mode with this on (Idea, Journal and Scene to start)
   files each recording, with what was heard and what was typed in, on that
   day's Inkwell page (`scribe/keep.ts` in daybook). Inkwell writes it up like

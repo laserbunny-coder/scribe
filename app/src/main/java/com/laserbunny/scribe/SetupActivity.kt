@@ -86,6 +86,10 @@ class SetupActivity : Activity() {
         }
     }
 
+    private fun openAccessibility() {
+        try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (e: Exception) { toast("Open Settings, then Accessibility.") }
+    }
+
     override fun onPause() {
         Scribe.unlisten(changed)
         super.onPause()
@@ -178,6 +182,20 @@ class SetupActivity : Activity() {
             page.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
         }
         page.addView(pill("New mode").apply { setOnClickListener { editMode(Mode("", "", "", emptyList())) } }.margins(this, t = 4))
+
+        page.addView(label("Floating button", 20f, C.TEXT, true).margins(this, t = 32, b = 4))
+        if (FloatButton.running) {
+            page.addView(label("On. While SwiftKey (or any other keyboard) is open, the orange Scribe button sits just above it: tap it to switch to Scribe, and Scribe’s keyboard key switches back. Drag it to move it.", 13f, C.DIM).margins(this, b = 10))
+            page.addView(pill("Turn it off").apply { setOnClickListener { openAccessibility() } })
+        } else {
+            page.addView(label("Puts a Scribe button just above SwiftKey, so getting to Scribe is one tap. To turn it on:\n1. Tap the button below, then Installed apps (or Downloaded apps), then Scribe floating button, and switch it on.\n2. If Android says it’s restricted: tap Scribe’s App info below, then the ⋮ menu at the top right, then Allow restricted settings, and do step 1 again.\n3. On Samsung, in Scribe’s App info, tap Battery and pick Unrestricted, so it isn’t switched off.", 13f, C.DIM).margins(this, b = 10))
+            val r = row(this)
+            r.addView(pill("Turn on the floating button", "filled").apply { setOnClickListener { openAccessibility() } }.margins(this, r = 8))
+            r.addView(pill("Scribe’s App info").apply {
+                setOnClickListener { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+            })
+            page.addView(r)
+        }
 
         page.addView(label("Fixing by voice", 20f, C.TEXT, true).margins(this, t = 32, b = 4))
         page.addView(label("On the keyboard, hold Fix and say what to change: “make it Tuesday”, “make that friendlier”, “Nate, N A T E”. It changes what Scribe just typed, or the words you selected. When you correct a name, tap Remember and Scribe listens for that spelling from then on.", 13f, C.DIM).margins(this, b = 12))
