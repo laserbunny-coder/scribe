@@ -386,6 +386,9 @@ class FloatButton : AccessibilityService() {
 
     private fun showPanel(s: State) {
         if (keyboardAt.height() <= 0) return
+        // Take the old panel away first: removing it after building the new one
+        // also stopped the new one's timer, so it sat at 0:00.
+        removePanel()
         val p = overlayParams().apply {
             x = keyboardAt.left; y = keyboardAt.top
             width = keyboardAt.width(); height = keyboardAt.height()
@@ -427,7 +430,6 @@ class FloatButton : AccessibilityService() {
             v.addView(label((s as? State.Working)?.label ?: "Writing it out…", 16f, C.TEXT).apply { gravity = Gravity.CENTER },
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
         }
-        removePanel()
         try { wm.addView(v, p); panel = v } catch (e: Exception) {}
     }
 
