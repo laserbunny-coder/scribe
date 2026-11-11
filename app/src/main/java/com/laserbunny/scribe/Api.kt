@@ -43,6 +43,23 @@ class Api(private val store: Store) {
             if (current != null) put("current", current.toJson().toString())
         })
 
+    /** A change said out loud to some text: { said, text, learn, unchanged }. */
+    fun fix(audio: File, p: Purpose.Fix, durationMs: Long): JSONObject =
+        upload(audio, mapOf(
+            "action" to "fix", "text" to p.text, "before" to p.before, "after" to p.after, "how" to p.how,
+            "mode" to p.mode, "app" to p.app, "duration" to durationMs.toString(),
+        ))
+
+    /** Spellings the speech service is told to listen for (names fixed by voice). */
+    fun spellings(): List<String> = strings(call("GET", "/scribe/spellings", null, null))
+    fun remember(term: String): List<String> = strings(call("POST", "/scribe", JSONObject().put("action", "remember").put("term", term), null))
+    fun forget(term: String): List<String> = strings(call("POST", "/scribe", JSONObject().put("action", "forget").put("term", term), null))
+
+    private fun strings(o: JSONObject): List<String> {
+        val a = o.optJSONArray("spellings") ?: JSONArray()
+        return (0 until a.length()).map { a.getString(it) }
+    }
+
     fun saveMode(mode: Mode): Mode =
         Mode.from(call("POST", "/scribe", JSONObject().put("action", "save-mode").put("mode", mode.toJson()), null).getJSONObject("mode"))
 

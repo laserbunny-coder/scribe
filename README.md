@@ -47,6 +47,18 @@ the tray. Press Ctrl + Shift + Space anywhere, talk, and press it again.
 - Every push to main builds a new APK (`.github/workflows/android.yml`) and
   publishes it as the latest release. `app/scribe.keystore` signs every build
   with the same key so a new one installs over the old.
+- Fixing by voice: under the mode chips, hold **Hold to fix** and say what to
+  change ("make it Tuesday", "make that friendlier", "Nate, N A T E"), then
+  let go (or tap it once and tap the square when done). It changes the words
+  you selected, else what Scribe just typed (if it's still right before the
+  cursor), else the line before the cursor (`fixTargetOf` in `Fixing.kt`).
+  The server's `fix` action hears it and has Claude make only that change;
+  the new words are typed over the old ones, never added on, and Undo puts
+  the old ones back. When a fix corrects a name, **Remember** keeps that
+  spelling (`scribe_spellings` in daybook) and the speech service listens for
+  it from then on; the Scribe app lists them under "Fixing by voice", each
+  with Remove. The , . ? ! keys beside Fix put punctuation right after the
+  last word.
 - Keep in Inkwell: a mode with this on (Idea, Journal and Scene to start)
   files each recording, with what was heard and what was typed in, on that
   day's Inkwell page (`scribe/keep.ts` in daybook). Inkwell writes it up like

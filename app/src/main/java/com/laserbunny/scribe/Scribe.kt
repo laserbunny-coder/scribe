@@ -18,17 +18,30 @@ sealed class Purpose {
     data class Dictate(val mode: String, val app: String, val field: String) : Purpose()
     /** `current` is the mode being changed (saved or still a draft); null for a new one. */
     data class MakeMode(val current: Mode?) : Purpose()
+    /**
+     * A change said out loud to `text`: what was selected ("selection"), what
+     * Scribe just typed ("last"), or the line before the cursor ("before").
+     * `before` and `after` are a little of the text around it, to understand it by.
+     */
+    data class Fix(
+        val text: String, val before: String, val after: String, val how: String,
+        val mode: String, val app: String, val field: String,
+    ) : Purpose()
 
     fun toJson(): JSONObject = when (this) {
         is Keep -> JSONObject().put("kind", "keep")
         is Dictate -> JSONObject().put("kind", "dictate").put("mode", mode).put("app", app).put("field", field)
         is MakeMode -> JSONObject().put("kind", "make-mode").put("current", current?.toJson())
+        is Fix -> JSONObject().put("kind", "fix").put("text", text).put("before", before).put("after", after)
+            .put("how", how).put("mode", mode).put("app", app).put("field", field)
     }
 
     companion object {
         fun from(o: JSONObject): Purpose = when (o.optString("kind")) {
             "make-mode" -> MakeMode(o.optJSONObject("current")?.let { Mode.from(it) })
             "keep" -> Keep
+            "fix" -> Fix(o.optString("text"), o.optString("before"), o.optString("after"), o.optString("how"),
+                o.optString("mode"), o.optString("app"), o.optString("field"))
             else -> Dictate(o.optString("mode"), o.optString("app"), o.optString("field"))
         }
     }
@@ -43,10 +56,22 @@ sealed class State {
     data class Failed(val message: String, val canRetry: Boolean) : State()
     /** A mode Claude drafted from what was said, waiting for Save; `added` is what went on the end of it. */
     data class Draft(val mode: Mode, val said: String, val added: String = "") : State()
+    /**
+     * A spoken fix came back and is typed in over the old words (`from` became
+     * `to`). `learn`: names it corrected, which can be remembered.
+     */
+    data class Fixed(
+        val said: String, val from: String, val to: String, val how: String, val field: String,
+        val learn: List<String>, val remembered: Set<String> = emptySet(),
+    ) : State()
 }
 
-/** Text for the keyboard to type in; `replace` is text it typed just before, to swap out. */
-data class Insert(val text: String, val replace: String?, val field: String)
+/**
+ * Text for the keyboard to type in; `replace` is text just before the cursor
+ * (or, with `selection`, the selected text) to swap out. A `strict` one only
+ * goes in where it can replace: a fix is never just added on.
+ */
+data class Insert(val text: String, val replace: String?, val field: String, val selection: Boolean = false, val strict: Boolean = false)
 
 /**
  * Scribe's one brain on the phone, shared by the keyboard and the "listening"
@@ -101,6 +126,7 @@ object Scribe {
 
     fun start(purpose: Purpose): Boolean {
         if (state is State.Recording) return true
+        typeFailed = false
         val dir = File(app.filesDir, "recordings").apply { mkdirs() }
         val f = File(dir, "rec-${System.currentTimeMillis()}.m4a")
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(app) else @Suppress("DEPRECATION") MediaRecorder()
@@ -197,7 +223,7 @@ object Scribe {
             ?.let { try { Purpose.from(JSONObject(it)) } catch (e: Exception) { null } }
             ?: Purpose.Dictate(store.modes.first().id, "", "")
         val ms = store.pendingMs
-        set(State.Working(when (purpose) { is Purpose.MakeMode -> "Making the mode…"; is Purpose.Keep -> "Putting it in Inkwell…"; else -> "Writing it out…" }))
+        set(State.Working(when (purpose) { is Purpose.MakeMode -> "Making the mode…"; is Purpose.Keep -> "Putting it in Inkwell…"; is Purpose.Fix -> "Fixing it…"; else -> "Writing it out…" }))
         work.execute {
             try {
                 when (purpose) {
@@ -219,6 +245,25 @@ object Scribe {
                             store.lastWaiting = true
                             pending = Insert(result.text, null, result.field)
                             set(State.Done(result, o.optString("warning").ifEmpty { null }))
+                        }
+                    }
+                    is Purpose.Fix -> {
+                        val o = api.fix(audio, purpose, ms)
+                        done()
+                        val said = o.optString("said").trim()
+                        if (o.optBoolean("unchanged")) {
+                            set(State.Failed(
+                                if (said.isEmpty()) "Didn't catch a change. Hold Fix and say it again."
+                                else "Didn't hear a change to make in “${said.take(80)}”. Hold Fix and try again.",
+                                false,
+                            ))
+                        } else {
+                            val to = o.optString("text")
+                            val learn = o.optJSONArray("learn")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
+                            // What Scribe just typed is now the fixed version (for Original, another mode, Undo).
+                            if (purpose.how == "last") store.last?.let { if (it.field == purpose.field && it.text == purpose.text) store.last = it.copy(text = to) }
+                            pending = Insert(to, purpose.text, purpose.field, selection = purpose.how == "selection", strict = true)
+                            set(State.Fixed(said, purpose.text, to, purpose.how, purpose.field, learn))
                         }
                     }
                     is Purpose.MakeMode -> {
@@ -268,6 +313,35 @@ object Scribe {
      */
     var typeFailed = false
         private set
+
+    /** A fix that couldn't go in over the old words: it waits on the keyboard with Copy instead. */
+    fun fixFailed() {
+        typeFailed = true
+        main.post { listeners.toList().forEach { it() } }
+    }
+
+    /** Puts the words from before a fix back. */
+    fun undoFix() {
+        val s = state as? State.Fixed ?: return
+        pending = Insert(s.from, s.to, s.field, strict = true)
+        if (s.how == "last") store.last?.let { if (it.text == s.to) store.last = it.copy(text = s.from) }
+        set(State.Idle)
+    }
+
+    /** Has the speech service listen for this spelling from now on. */
+    fun remember(term: String) {
+        val s = state as? State.Fixed ?: return
+        if (term in s.remembered) return
+        set(s.copy(remembered = s.remembered + term))
+        work.execute {
+            try {
+                api.remember(term)
+            } catch (e: ScribeError) {
+                Log.w(TAG, "remember", e)
+                (state as? State.Fixed)?.let { set(it.copy(remembered = it.remembered - term)) }
+            }
+        }
+    }
 
     fun putBack(i: Insert) {
         pending = i
