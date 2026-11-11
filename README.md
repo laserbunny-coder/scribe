@@ -52,6 +52,10 @@ the tray. Press Ctrl + Shift + Space anywhere, talk, and press it again.
   let go (or tap it once and tap the square when done). It changes the words
   you selected, else what Scribe just typed (if it's still right before the
   cursor), else the line before the cursor (`fixTargetOf` in `Fixing.kt`).
+  Saying "the whole thing" (or "all of it", "throughout") changes everything
+  in the box instead, when the box holds 4,000 characters or fewer: with
+  nothing selected the whole box goes along, and the server answers with
+  scope "whole".
   The server's `fix` action hears it and has Claude make only that change;
   the new words are typed over the old ones, never added on, and Undo puts
   the old ones back. When a fix corrects a name, **Remember** keeps that

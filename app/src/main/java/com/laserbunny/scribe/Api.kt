@@ -47,7 +47,7 @@ class Api(private val store: Store) {
     fun fix(audio: File, p: Purpose.Fix, durationMs: Long): JSONObject =
         upload(audio, mapOf(
             "action" to "fix", "text" to p.text, "before" to p.before, "after" to p.after, "how" to p.how,
-            "mode" to p.mode, "app" to p.app, "duration" to durationMs.toString(),
+            "mode" to p.mode, "app" to p.app, "whole" to p.whole, "duration" to durationMs.toString(),
         ))
 
     /** Spellings the speech service is told to listen for (names fixed by voice). */

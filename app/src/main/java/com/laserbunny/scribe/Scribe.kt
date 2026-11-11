@@ -23,9 +23,15 @@ sealed class Purpose {
      * Scribe just typed ("last"), or the line before the cursor ("before").
      * `before` and `after` are a little of the text around it, to understand it by.
      */
+    /**
+     * A spoken fix. `whole` is everything in the box when it's short enough
+     * to change in one go (empty otherwise), with the cursor `cut` characters
+     * in, so "make the whole thing friendlier" can reach all of it.
+     */
     data class Fix(
         val text: String, val before: String, val after: String, val how: String,
         val mode: String, val app: String, val field: String,
+        val whole: String = "", val cut: Int = 0,
     ) : Purpose()
 
     fun toJson(): JSONObject = when (this) {
@@ -33,7 +39,7 @@ sealed class Purpose {
         is Dictate -> JSONObject().put("kind", "dictate").put("mode", mode).put("app", app).put("field", field)
         is MakeMode -> JSONObject().put("kind", "make-mode").put("current", current?.toJson())
         is Fix -> JSONObject().put("kind", "fix").put("text", text).put("before", before).put("after", after)
-            .put("how", how).put("mode", mode).put("app", app).put("field", field)
+            .put("how", how).put("mode", mode).put("app", app).put("field", field).put("whole", whole).put("cut", cut)
     }
 
     companion object {
@@ -41,7 +47,7 @@ sealed class Purpose {
             "make-mode" -> MakeMode(o.optJSONObject("current")?.let { Mode.from(it) })
             "keep" -> Keep
             "fix" -> Fix(o.optString("text"), o.optString("before"), o.optString("after"), o.optString("how"),
-                o.optString("mode"), o.optString("app"), o.optString("field"))
+                o.optString("mode"), o.optString("app"), o.optString("field"), o.optString("whole"), o.optInt("cut"))
             else -> Dictate(o.optString("mode"), o.optString("app"), o.optString("field"))
         }
     }
@@ -68,10 +74,14 @@ sealed class State {
 
 /**
  * Text for the keyboard to type in; `replace` is text just before the cursor
- * (or, with `selection`, the selected text) to swap out. A `strict` one only
- * goes in where it can replace: a fix is never just added on.
+ * (or, with `selection`, the selected text) to swap out, and `replaceAfter`
+ * text just after it to swap out too. A `strict` one only goes in where it
+ * can replace: a fix is never just added on.
  */
-data class Insert(val text: String, val replace: String?, val field: String, val selection: Boolean = false, val strict: Boolean = false)
+data class Insert(
+    val text: String, val replace: String?, val field: String,
+    val selection: Boolean = false, val strict: Boolean = false, val replaceAfter: String? = null,
+)
 
 /**
  * Scribe's one brain on the phone, shared by the keyboard and the "listening"
@@ -260,10 +270,17 @@ object Scribe {
                         } else {
                             val to = o.optString("text")
                             val learn = o.optJSONArray("learn")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
-                            // What Scribe just typed is now the fixed version (for Original, another mode, Undo).
-                            if (purpose.how == "last") store.last?.let { if (it.field == purpose.field && it.text == purpose.text) store.last = it.copy(text = to) }
-                            pending = Insert(to, purpose.text, purpose.field, selection = purpose.how == "selection", strict = true)
-                            set(State.Fixed(said, purpose.text, to, purpose.how, purpose.field, learn))
+                            if (o.optString("scope") == "whole" && purpose.whole.isNotEmpty()) {
+                                // "The whole thing": everything in the box is swapped for the fixed version.
+                                val cut = purpose.cut.coerceIn(0, purpose.whole.length)
+                                pending = Insert(to, purpose.whole.substring(0, cut), purpose.field, strict = true, replaceAfter = purpose.whole.substring(cut))
+                                set(State.Fixed(said, purpose.whole, to, "whole", purpose.field, learn))
+                            } else {
+                                // What Scribe just typed is now the fixed version (for Original, another mode, Undo).
+                                if (purpose.how == "last") store.last?.let { if (it.field == purpose.field && it.text == purpose.text) store.last = it.copy(text = to) }
+                                pending = Insert(to, purpose.text, purpose.field, selection = purpose.how == "selection", strict = true)
+                                set(State.Fixed(said, purpose.text, to, purpose.how, purpose.field, learn))
+                            }
                         }
                     }
                     is Purpose.MakeMode -> {
