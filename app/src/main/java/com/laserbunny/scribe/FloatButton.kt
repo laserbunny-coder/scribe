@@ -2,6 +2,7 @@ package com.laserbunny.scribe
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.InputMethod
+import android.annotation.TargetApi
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -106,6 +107,7 @@ class FloatButton : AccessibilityService() {
     }
 
     /** Android 13+: lets the button type into the box while SwiftKey stays the keyboard. */
+    @TargetApi(33)
     override fun onCreateInputMethod(): InputMethod = object : InputMethod(this) {
         override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
             super.onStartInput(attribute, restarting)
@@ -317,16 +319,19 @@ class FloatButton : AccessibilityService() {
      * or the button wouldn't be). After a try that didn't land it waits for
      * Copy, or for the Scribe keyboard, instead of trying again and again.
      */
+    @TargetApi(33)
     private fun deliver() {
         val f = field ?: return
         if (!canType() || button == null || Scribe.typeFailed) return
         Scribe.takeInsert(f)?.let { typeIn(it) }
     }
 
+    @TargetApi(33)
     private fun conn(): InputMethod.AccessibilityInputConnection? =
         if (Build.VERSION.SDK_INT >= 33) inputMethod?.currentInputConnection else null
 
     /** The box's text before the cursor (or selection), the selected text, and the text after. */
+    @TargetApi(33)
     private fun around(before: Int, after: Int): Triple<String, String, String>? {
         if (Build.VERSION.SDK_INT < 33) return null
         val st = try { conn()?.getSurroundingText(before, after, 0) } catch (e: Exception) { null } ?: return null
@@ -338,6 +343,7 @@ class FloatButton : AccessibilityService() {
     }
 
     /** Types it in, swapping out what it replaces; a fix only ever goes in where it can replace. */
+    @TargetApi(33)
     private fun typeIn(i: Insert) {
         val c = conn() ?: return couldNot(i)
         val r = i.replace ?: ""
@@ -359,6 +365,7 @@ class FloatButton : AccessibilityService() {
     }
 
     /** Looks that the words really arrived; if not, they wait to be copied. */
+    @TargetApi(33)
     private fun landed(i: Insert) {
         val squash = { s: String -> s.replace(Regex("\\s+"), " ").trim() }
         val here = around(2000, 0)?.first ?: return
