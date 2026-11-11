@@ -13,6 +13,11 @@ const val FIX_AROUND = 800
  * it's still right before the cursor, else the line or paragraph before the
  * cursor (its last [FIX_LINE_MAX] characters, from a word boundary).
  * Null when there's nothing to fix.
+ *
+ * With nothing selected, the whole box goes along too when all of it was
+ * read and it fits in [FIX_MAX], so the fix can cover all of it when they
+ * say "the whole thing". `before` and `after` should be read a little past
+ * [FIX_MAX], so a longer box shows as too long rather than looking whole.
  */
 fun fixTargetOf(
     before: String, after: String, selected: String?, last: String?,
@@ -22,8 +27,10 @@ fun fixTargetOf(
     if (!selected.isNullOrBlank()) {
         return Purpose.Fix(selected, before.takeLast(FIX_AROUND), around, "selection", mode, app, field)
     }
+    val box = before + after
+    val whole = if (box.length <= FIX_MAX && box.isNotBlank()) box else ""
     if (!last.isNullOrBlank() && last.length <= FIX_MAX && before.endsWith(last)) {
-        return Purpose.Fix(last, before.dropLast(last.length).takeLast(FIX_AROUND), around, "last", mode, app, field)
+        return Purpose.Fix(last, before.dropLast(last.length).takeLast(FIX_AROUND), around, "last", mode, app, field, whole, before.length)
     }
     val content = before.trimEnd()
     if (content.isEmpty()) return null
@@ -34,5 +41,5 @@ fun fixTargetOf(
     }
     val text = before.substring(start)
     if (text.isBlank()) return null
-    return Purpose.Fix(text, before.substring(0, start).takeLast(FIX_AROUND), around, "before", mode, app, field)
+    return Purpose.Fix(text, before.substring(0, start).takeLast(FIX_AROUND), around, "before", mode, app, field, whole, before.length)
 }

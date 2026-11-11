@@ -107,13 +107,26 @@ class ScribeKeyboard : InputMethodService() {
         val lines = byLines && multiLine()
         ic.beginBatchEdit()
         val replace = i.replace
-        if (!replace.isNullOrEmpty()) {
-            // Selected words are typed over as they are; otherwise the words go just before the cursor.
+        val replaceAfter = i.replaceAfter
+        if (!replace.isNullOrEmpty() || !replaceAfter.isNullOrEmpty()) {
+            // Selected words are typed over as they are; otherwise the words go just before the cursor
+            // (and, for the whole box, the words just after it go too).
+            val r = replace ?: ""
             val selected = if (i.selection) ic.getSelectedText(0)?.toString() else null
-            val before = ic.getTextBeforeCursor(replace.length, 0)?.toString()
+            val before = ic.getTextBeforeCursor(r.length, 0)?.toString()
+            val after = if (replaceAfter.isNullOrEmpty()) "" else ic.getTextAfterCursor(replaceAfter.length, 0)?.toString()
             when {
+                replaceAfter != null -> {
+                    if (before == r && after == replaceAfter && ic.getSelectedText(0).isNullOrEmpty()) {
+                        ic.deleteSurroundingText(r.length, replaceAfter.length)
+                    } else {
+                        ic.endBatchEdit()
+                        Scribe.fixFailed()
+                        return
+                    }
+                }
                 selected == replace -> {}
-                before == replace -> ic.deleteSurroundingText(replace.length, 0)
+                before == replace -> ic.deleteSurroundingText(r.length, 0)
                 i.strict -> {
                     // The words moved or changed since: typing the fix in here would only add to them.
                     ic.endBatchEdit()
@@ -407,7 +420,7 @@ class ScribeKeyboard : InputMethodService() {
             bar.addView(pill("Copy fixed").apply { setOnClickListener { copy(s.to); (this as TextView).text = "Copied" } })
         } else {
             bar.addView(iconButton(R.drawable.ic_check, 24, 0, C.GOOD, "").apply { isClickable = false; setPadding(0, 0, 0, 0) })
-            bar.addView(label("Changed", 14f).apply { maxLines = 1 }.margins(this, l = 8), wrap(weight = 1f))
+            bar.addView(label(if (s.how == "whole") "Changed the whole box" else "Changed", 14f).apply { maxLines = 1 }.margins(this, l = 8), wrap(weight = 1f))
             for (term in s.learn.take(2)) {
                 val kept = term in s.remembered
                 bar.addView(pill(if (kept) "✓ $term" else "Remember $term", if (kept) "plain" else "rec", if (kept) C.GOOD else C.REC).apply {
@@ -458,7 +471,7 @@ class ScribeKeyboard : InputMethodService() {
 
     private fun fixNote(how: String?) = when (how) {
         "selection" -> "Say what to change in the words you selected."
-        "last" -> "Say what to change in what Scribe just typed."
+        "last" -> "Say what to change in what Scribe just typed, or say “the whole thing” for everything in the box."
         else -> "Say what to change in the line before the cursor."
     }
 
@@ -509,8 +522,9 @@ class ScribeKeyboard : InputMethodService() {
     private fun fixTarget(): Purpose.Fix? {
         val ic = currentInputConnection ?: return null
         val last = Scribe.store.last?.takeIf { it.field == field }?.text
-        val before = ic.getTextBeforeCursor(maxOf(3000, (last?.length ?: 0) + FIX_AROUND), 0)?.toString() ?: return null
-        val after = ic.getTextAfterCursor(FIX_AROUND, 0)?.toString() ?: ""
+        // A little past the most a fix can change, so a longer box shows as too long to change whole.
+        val before = ic.getTextBeforeCursor(maxOf(FIX_MAX + 1, (last?.length ?: 0) + FIX_AROUND), 0)?.toString() ?: return null
+        val after = ic.getTextAfterCursor(FIX_MAX + 1, 0)?.toString() ?: ""
         return fixTargetOf(before, after, ic.getSelectedText(0)?.toString(), last, Scribe.store.modeFor(app).id, app, field)
     }
 

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="float_summary">A Scribe button above your usual keyboard</string>
+    <string name="float_description">Shows a small Scribe button just above your usual keyboard (SwiftKey, for example). Tap it to switch straight to the Scribe keyboard. Scribe only checks whether a keyboard is open, whose it is, and whether the box is a password box, where the button hides. It does not read or keep anything you type.</string>
+</resources>
