@@ -367,6 +367,11 @@ object Scribe {
         main.post { listeners.toList().forEach { it() } }
     }
 
+    /** True while words are waiting to be typed into a box. */
+    val waiting: Boolean get() = pending != null
+    /** The words waiting to be typed in, if any. */
+    val waitingText: String? get() = pending?.text
+
     /** What's waiting for a different text box than this one. */
     fun waitingElsewhere(field: String): Insert? = pending?.takeIf { it.field != field }
 
