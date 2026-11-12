@@ -117,12 +117,27 @@ class FloatButton : AccessibilityService() {
             super.onStartInput(attribute, restarting)
             fieldApp = attribute.packageName ?: ""
             field = "$fieldApp:${attribute.fieldId}"
+            log("box opened in $fieldApp (field ${attribute.fieldId}${if (restarting) ", restarting" else ""})")
             // Something may be waiting for this box (the box comes back after the see-through screen).
             main.postDelayed({ onScribe() }, 150)
         }
+
+        override fun onFinishInput() {
+            super.onFinishInput()
+            log("box closed")
+        }
     }
 
+    private fun log(what: String) = FloatLog.add(this, what)
+    private var kbWas: Boolean? = null
+    private var stateWas = ""
+    private var windowWas = ""
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val w = "${event.packageName}/${event.className?.toString()?.substringAfterLast('.')}"
+            if (w != windowWas) { windowWas = w; log("window: $w") }
+        }
         // Windows change in bursts while a keyboard slides in: look once it settles.
         main.removeCallbacks(check)
         main.postDelayed(check, 120)
@@ -144,11 +159,13 @@ class FloatButton : AccessibilityService() {
 
     /** Shows the button above another keyboard, or hides it. */
     private fun update() {
-        // While it's listening for this button, it stays put even if the keyboard blinks away.
-        if (ours && busy()) { show(); return }
         val ime = try {
             windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
         } catch (e: Exception) { null }
+        val kb = ime != null
+        if (kb != kbWas) { kbWas = kb; log(if (kb) "keyboard up" + (if (isScribe(ime!!)) " (Scribe)" else "") else "keyboard down") }
+        // While it's listening for this button, it stays put even if the keyboard blinks away.
+        if (ours && busy()) { show(); return }
         if (ime == null || isScribe(ime) || inPasswordBox()) { hide(); removeStrip(); return }
         ime.getBoundsInScreen(keyboardAt)
         if (keyboardAt.height() <= 0) { hide(); return }
@@ -273,6 +290,7 @@ class FloatButton : AccessibilityService() {
      * start the microphone only while it's on screen, and that screen closes at once.
      */
     private fun listen(p: Purpose) {
+        log("tap: listen in $fieldApp")
         removeStrip()
         unsent = null
         ours = true
@@ -301,6 +319,8 @@ class FloatButton : AccessibilityService() {
 
     private fun onScribe() {
         val s = Scribe.state
+        val name = s.javaClass.simpleName + if (s is State.Working) " (${s.label})" else ""
+        if (name != stateWas) { stateWas = name; log("scribe: $name${if (ours) "" else " (not from the button)"}") }
         if (!ours) { removePanel(); return }
         if (s is State.Recording || s is State.Working) showPanel(s) else removePanel()
         paintButton()
@@ -333,7 +353,13 @@ class FloatButton : AccessibilityService() {
         val f = field ?: return
         // Only into a box that's really there: the screen on, a keyboard up, and the box connected.
         // A long dictation can end with the phone locked, and words typed then were lost.
-        if (!canType() || button == null || Scribe.typeFailed || !awake() || !keyboardUp() || conn() == null) return
+        if (!canType() || button == null || Scribe.typeFailed || !awake() || !keyboardUp() || conn() == null) {
+            if (Scribe.waiting) log("words waiting: " + listOfNotNull(
+                "no button".takeIf { button == null }, "tried before".takeIf { Scribe.typeFailed },
+                "screen off".takeIf { !awake() }, "keyboard down".takeIf { !keyboardUp() }, "box gone".takeIf { conn() == null },
+            ).joinToString(", "))
+            return
+        }
         // After the screen was off, a web box can come back under a new id: from this button,
         // in the same app, it's the same box.
         if (ours) Scribe.waitingElsewhere(f)?.let { if (it.field.substringBefore(':') == fieldApp) Scribe.moveHere(f) }
@@ -394,10 +420,11 @@ class FloatButton : AccessibilityService() {
         if (i.text.isEmpty()) return
         val prev = if (i.replace == null) around(1, 0)?.first ?: "" else ""
         val gap = if (prev.isNotEmpty() && !prev[0].isWhitespace()) " " else ""
+        var joined: String? = null
         if (i.text.contains('\n') && multiLine()) {
-            // Long dictations come in paragraphs. Web editors such as Inkwell's can drop the
-            // cursor (and the keyboard) when text with line breaks arrives in one go, so it's
-            // typed a line at a time with Enter between, as the Scribe keyboard does.
+            // Long dictations come in paragraphs: typed a line at a time with Enter between,
+            // which keeps the blank lines between paragraphs in Inkwell.
+            joined = (gap + i.text).replace("\n", "")
             (gap + i.text).split('\n').forEachIndexed { n, line ->
                 if (n > 0) {
                     c.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
@@ -408,15 +435,29 @@ class FloatButton : AccessibilityService() {
         } else {
             c.commitText(gap + i.text, 1, null)
         }
-        main.postDelayed({ landed(i) }, 700)
+        log("typed ${i.text.length} characters" + (if (joined != null) " a line at a time" else "") + if (i.replace != null) " over ${i.replace.length}" else "")
+        main.postDelayed({ landed(i, joined, gap) }, 700)
     }
 
     /** Looks that the words really arrived; if not, they wait to be copied. */
     @TargetApi(33)
-    private fun landed(i: Insert) {
+    private fun landed(i: Insert, joined: String? = null, gap: String = "") {
         val squash = { s: String -> s.replace(Regex("\\s+"), " ").trim() }
-        val here = around(2000, 0)?.first
+        val here = around(max(2000, (joined?.length ?: 0) + 10), 0)?.first
+        // Some apps (Samsung Notes) ignore the Enter presses, so the lines ran together:
+        // swap them for the words with their line breaks in one go.
+        if (joined != null && here != null && here.endsWith(joined)) {
+            val c = conn()
+            if (c != null) {
+                log("lines ran together: typed again in one go")
+                c.deleteSurroundingText(joined.length, 0)
+                c.commitText(gap + i.text, 1, null)
+                main.postDelayed({ landed(i) }, 700)
+                return
+            }
+        }
         if (here == null) {
+            log("landed? can't read the box back")
             // The box can't be read back: it may not have landed, so keep the words at hand.
             unsent = i.text
             return showStrip(listOf(
@@ -430,6 +471,7 @@ class FloatButton : AccessibilityService() {
     }
 
     private fun couldNot(i: Insert) {
+        log("couldn't type it here")
         unsent = i.text
         if (!i.strict && i.text.isNotEmpty()) Scribe.putBack(i.copy(replace = null))
         showStrip(listOf(
