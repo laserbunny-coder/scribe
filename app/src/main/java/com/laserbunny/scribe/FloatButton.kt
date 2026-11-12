@@ -394,10 +394,11 @@ class FloatButton : AccessibilityService() {
         if (i.text.isEmpty()) return
         val prev = if (i.replace == null) around(1, 0)?.first ?: "" else ""
         val gap = if (prev.isNotEmpty() && !prev[0].isWhitespace()) " " else ""
+        var joined: String? = null
         if (i.text.contains('\n') && multiLine()) {
-            // Long dictations come in paragraphs. Web editors such as Inkwell's can drop the
-            // cursor (and the keyboard) when text with line breaks arrives in one go, so it's
-            // typed a line at a time with Enter between, as the Scribe keyboard does.
+            // Long dictations come in paragraphs: typed a line at a time with Enter between,
+            // which keeps the blank lines between paragraphs in Inkwell.
+            joined = (gap + i.text).replace("\n", "")
             (gap + i.text).split('\n').forEachIndexed { n, line ->
                 if (n > 0) {
                     c.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
@@ -408,14 +409,25 @@ class FloatButton : AccessibilityService() {
         } else {
             c.commitText(gap + i.text, 1, null)
         }
-        main.postDelayed({ landed(i) }, 700)
+        main.postDelayed({ landed(i, joined, gap) }, 700)
     }
 
     /** Looks that the words really arrived; if not, they wait to be copied. */
     @TargetApi(33)
-    private fun landed(i: Insert) {
+    private fun landed(i: Insert, joined: String? = null, gap: String = "") {
         val squash = { s: String -> s.replace(Regex("\\s+"), " ").trim() }
-        val here = around(2000, 0)?.first
+        val here = around(max(2000, (joined?.length ?: 0) + 10), 0)?.first
+        // Some apps (Samsung Notes) ignore the Enter presses, so the lines ran together:
+        // swap them for the words with their line breaks in one go.
+        if (joined != null && here != null && here.endsWith(joined)) {
+            val c = conn()
+            if (c != null) {
+                c.deleteSurroundingText(joined.length, 0)
+                c.commitText(gap + i.text, 1, null)
+                main.postDelayed({ landed(i) }, 700)
+                return
+            }
+        }
         if (here == null) {
             // The box can't be read back: it may not have landed, so keep the words at hand.
             unsent = i.text
