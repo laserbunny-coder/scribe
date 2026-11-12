@@ -13,6 +13,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -60,6 +61,8 @@ class FloatButton : AccessibilityService() {
         private const val PREFS = "float"
         private const val HOLD_MS = 450L
         private const val STRIP_MS = 8000L
+        /** A strip with words to copy stays longer, so it can't be missed. */
+        private const val KEEP_MS = 30000L
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -303,6 +306,11 @@ class FloatButton : AccessibilityService() {
         deliver()
         // A box that wouldn't take the words keeps its Copy strip.
         if (unsent != null) return
+        // Words still waiting (the box wasn't ready yet) get Copy and Type it here, not Undo.
+        if ((s is State.Done || s is State.Fixed) && Scribe.waiting) {
+            if (button != null) showStrip(waitingStrip(), KEEP_MS)
+            return
+        }
         when (s) {
             is State.Done -> showStrip(doneStrip(s))
             is State.Fixed -> showStrip(fixedStrip(s))
@@ -322,9 +330,30 @@ class FloatButton : AccessibilityService() {
     @TargetApi(33)
     private fun deliver() {
         val f = field ?: return
-        if (!canType() || button == null || Scribe.typeFailed) return
+        // Only into a box that's really there: the screen on, a keyboard up, and the box connected.
+        // A long dictation can end with the phone locked, and words typed then were lost.
+        if (!canType() || button == null || Scribe.typeFailed || !awake() || !keyboardUp() || conn() == null) return
+        // After the screen was off, a web box can come back under a new id: from this button,
+        // in the same app, it's the same box.
+        if (ours) Scribe.waitingElsewhere(f)?.let { if (it.field.substringBefore(':') == fieldApp) Scribe.moveHere(f) }
         Scribe.takeInsert(f)?.let { typeIn(it) }
     }
+
+    /** Types the waiting words into the box that's open now, when asked to. */
+    @TargetApi(33)
+    private fun typeHere() {
+        val f = field ?: return
+        if (!canType() || conn() == null) return toast("Tap into the text box first.")
+        unsent = null
+        Scribe.moveHere(f)
+        Scribe.takeInsert(f)?.let { typeIn(it) }
+    }
+
+    private fun awake() = getSystemService(PowerManager::class.java)?.isInteractive != false
+
+    private fun keyboardUp() = try {
+        windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+    } catch (e: Exception) { false }
 
     @TargetApi(33)
     private fun conn(): InputMethod.AccessibilityInputConnection? =
@@ -368,7 +397,15 @@ class FloatButton : AccessibilityService() {
     @TargetApi(33)
     private fun landed(i: Insert) {
         val squash = { s: String -> s.replace(Regex("\\s+"), " ").trim() }
-        val here = around(2000, 0)?.first ?: return
+        val here = around(2000, 0)?.first
+        if (here == null) {
+            // The box can't be read back: it may not have landed, so keep the words at hand.
+            unsent = i.text
+            return showStrip(listOf(
+                label("Did it go in?", 13f, C.DIM),
+                pill("Copy").apply { setOnClickListener { copy(i.text); (this as TextView).text = "Copied" } },
+            ), KEEP_MS)
+        }
         if (squash(here).contains(squash(i.text).takeLast(24))) return
         couldNot(i)
     }
@@ -379,7 +416,7 @@ class FloatButton : AccessibilityService() {
         showStrip(listOf(
             label("Couldn’t type it here", 13f, C.BAD),
             pill("Copy").apply { setOnClickListener { copy(i.text); (this as TextView).text = "Copied" } },
-        ))
+        ), KEEP_MS)
     }
 
     // ---- The panel over the keys while it listens ----
@@ -390,6 +427,8 @@ class FloatButton : AccessibilityService() {
         // also stopped the new one's timer, so it sat at 0:00.
         removePanel()
         val p = overlayParams().apply {
+            // A long dictation shouldn't end with the phone locked and the box gone.
+            flags = flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             x = keyboardAt.left; y = keyboardAt.top
             width = keyboardAt.width(); height = keyboardAt.height()
         }
@@ -422,7 +461,7 @@ class FloatButton : AccessibilityService() {
             r.addView(View(this), wrap(52, 52, context = this))
             v.addView(r.margins(this, t = 6))
             val note = if (purpose is Purpose.Fix) "Say what to change, or “the whole thing” for everything in the box. Tap the square when done."
-                else "Tap the square to type it in. Keeps listening with the screen off."
+                else "Tap the square to type it in. The screen stays on while it listens."
             v.addView(label(note, 12f, C.DIM).apply { gravity = Gravity.CENTER }.margins(this, t = 8))
             main.removeCallbacks(tick); main.post(tick)
         } else {
@@ -467,6 +506,16 @@ class FloatButton : AccessibilityService() {
         return views
     }
 
+    /** Words that came back but haven't gone into a box yet. */
+    private fun waitingStrip(): List<View> {
+        val text = Scribe.waitingText ?: Scribe.store.last?.text ?: ""
+        return listOf(
+            label("Words ready", 13f, C.DIM),
+            pill("Type it here", "rec", C.REC).apply { setOnClickListener { typeHere() } },
+            pill("Copy").apply { setOnClickListener { copy(text); (this as TextView).text = "Copied" } },
+        )
+    }
+
     /** Fix by voice, from the strip: like holding Fix on the Scribe keyboard. */
     private fun fixPill() = pill("Fix", "rec", C.REC).apply {
         setOnClickListener {
@@ -483,7 +532,7 @@ class FloatButton : AccessibilityService() {
         }
     }
 
-    private fun showStrip(views: List<View>) {
+    private fun showStrip(views: List<View>, ms: Long = STRIP_MS) {
         removeStrip()
         val b = button ?: return
         val r = row(this, Gravity.CENTER_VERTICAL).apply {
@@ -498,12 +547,13 @@ class FloatButton : AccessibilityService() {
         p.y = buttonParams.y + (b.height - r.measuredHeight) / 2
         try { wm.addView(r, p); strip = r } catch (e: Exception) {}
         main.removeCallbacks(hideStrip)
-        main.postDelayed(hideStrip, STRIP_MS)
+        main.postDelayed(hideStrip, ms)
     }
 
     private fun removeStrip() {
         dropStrip()
-        if (!busy()) ours = false
+        // Words still waiting keep the button following them, to type in when the box is back.
+        if (!busy() && !Scribe.waiting) ours = false
     }
 
     /**
