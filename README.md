@@ -78,7 +78,9 @@ the tray. Press Ctrl + Shift + Space anywhere, talk, and press it again.
   boxes. It reads the text around the cursor only when you tap it to type in
   or fix. Turned on from the Scribe app (Accessibility, then "Allow
   restricted settings" once for a sideloaded app; on Samsung set battery to
-  Unrestricted).
+  Unrestricted). It keeps a short log of what it saw (`FloatLog.kt`: keyboard
+  up or down, the box opening or closing, Scribe's state, how many characters
+  it typed, never the words), which "Copy its log" in the Scribe app copies.
 - Keep in Inkwell: a mode with this on (Idea, Journal and Scene to start)
   files each recording, with what was heard and what was typed in, on that
   day's Inkwell page (`scribe/keep.ts` in daybook). Inkwell writes it up like
