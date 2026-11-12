@@ -17,6 +17,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -349,6 +350,10 @@ class FloatButton : AccessibilityService() {
         Scribe.takeInsert(f)?.let { typeIn(it) }
     }
 
+    @TargetApi(33)
+    private fun multiLine() =
+        (inputMethod?.currentInputEditorInfo?.inputType ?: 0) and EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE != 0
+
     private fun awake() = getSystemService(PowerManager::class.java)?.isInteractive != false
 
     private fun keyboardUp() = try {
@@ -389,7 +394,20 @@ class FloatButton : AccessibilityService() {
         if (i.text.isEmpty()) return
         val prev = if (i.replace == null) around(1, 0)?.first ?: "" else ""
         val gap = if (prev.isNotEmpty() && !prev[0].isWhitespace()) " " else ""
-        c.commitText(gap + i.text, 1, null)
+        if (i.text.contains('\n') && multiLine()) {
+            // Long dictations come in paragraphs. Web editors such as Inkwell's can drop the
+            // cursor (and the keyboard) when text with line breaks arrives in one go, so it's
+            // typed a line at a time with Enter between, as the Scribe keyboard does.
+            (gap + i.text).split('\n').forEachIndexed { n, line ->
+                if (n > 0) {
+                    c.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+                    c.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+                }
+                if (line.isNotEmpty()) c.commitText(line, 1, null)
+            }
+        } else {
+            c.commitText(gap + i.text, 1, null)
+        }
         main.postDelayed({ landed(i) }, 700)
     }
 
@@ -406,7 +424,8 @@ class FloatButton : AccessibilityService() {
                 pill("Copy").apply { setOnClickListener { copy(i.text); (this as TextView).text = "Copied" } },
             ), KEEP_MS)
         }
-        if (squash(here).contains(squash(i.text).takeLast(24))) return
+        // The end of the last line is what should now sit just before the cursor.
+        if (squash(here).contains(squash(i.text.trimEnd().substringAfterLast('\n')).takeLast(24))) return
         couldNot(i)
     }
 
